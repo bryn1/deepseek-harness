@@ -7,7 +7,7 @@
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -55,14 +55,14 @@ function expectCode(code: SessionQueryErrorCode): Error {
   return expect.objectContaining({ code }) as Error
 }
 
-async function jsonlContext(listRefreshMs?: number): Promise<{ ctx: Context; root: string }> {
+async function jsonlContext(listRefreshMs?: number): Promise<{ ctx: Context; root: string; persistenceFiber: Fiber }> {
   const root = await freshRoot()
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(TestSessionQueryEngine, listRefreshMs === undefined ? {} : { listRefreshMs })
-  await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
-  return { ctx, root }
+  const persistenceFiber = await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
+  return { ctx, root, persistenceFiber }
 }
 
 /** Enter and announce one live session the test can detach at will. */
@@ -194,6 +194,39 @@ describe('persisted snapshot dispose reconciliation (R1)', () => {
     const ids = await waitUntilListed(ctx, candidates => !candidates.some(candidate => candidate === id))
     expect(ids.some(candidate => candidate === id)).toBe(false)
     expect(service.hasPendingSession(id)).toBe(false)
+    await ctx.fiber.dispose()
+  })
+
+  it('a disposal reconciles removal of a retained row whose artifact vanished out-of-band', async () => {
+    // The removal leg: with the artifact gone, the reconcile's `stat` reports
+    // the id absent and the retained row must be deleted. The TTL cannot tick
+    // in this window, so no rebuild exists to self-heal the listing — only
+    // the reconcile leg can remove the row.
+    const { ctx, root, persistenceFiber } = await jsonlContext(600_000)
+    const service = ctx.sessionPersistence as JsonlSessionPersistence
+    const id = SessionId('evicted')
+
+    // Materialize the artifact, then replace the persistence service: the
+    // fresh attach's eager build carries the stored header into the snapshot.
+    const writer = await service.create(headerOf('evicted', 9))
+    await writer.flush()
+    await writer.close()
+    await persistenceFiber.dispose()
+    await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
+    await expect(ctx.sessionQuery.listSessions()).resolves.toMatchObject([
+      { header: { id }, live: false, persisted: true },
+    ])
+
+    // The session enters live with the row already retained; the artifact is
+    // deleted out-of-band (no active write handle persists it again); the
+    // disposal dispatch reconciles the id past the settled barrier.
+    const { detach } = attachLiveSession(ctx, 'evicted', root)
+    await rm(sessionDir(root, undefined, id), { recursive: true, force: true })
+    detach()
+    await settle(15)
+
+    expect((await listIds(ctx)).some(candidate => candidate === id)).toBe(false)
+    await expect(ctx.sessionPersistence.stat(id)).resolves.toBeUndefined()
     await ctx.fiber.dispose()
   })
 })
