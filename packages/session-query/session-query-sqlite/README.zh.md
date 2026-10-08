@@ -51,6 +51,7 @@ kind: "package-reference"
 | `readWindowMax` | `50` | 继承的 `readEvent()` 的 `before`/`after` 原始事件数上限 |
 | `persistedReadConcurrency` | `4` | 继承批量读取的并发持久化日志读取数 |
 | `preparedSessionCacheSize` | `5` | 继承的 `observeSession` 读取器为复用保留的冷 prepared-Session 观察数 |
+| `listRefreshMs` | `60000` | 继承的持久化语料快照的后台 TTL 重新枚举间隔 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-session-query-sqlite)是每个受支持字段及其 JSDoc 的穷尽式真源。
 

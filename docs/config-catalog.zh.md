@@ -2553,6 +2553,8 @@ export interface Config extends SessionQueryConfig {
   persistedReadConcurrency?: number
   /** Maximum cold prepared-Session observations the inherited reader retains for reuse. Defaults to 5. */
   preparedSessionCacheSize?: number
+  /** Background re-enumeration interval, in milliseconds, of the in-memory persisted-session listing snapshot. Defaults to 60000. */
+  listRefreshMs?: number
 }
 
 /** SQLite module/handle opening phase; `never` disables full-text search entirely. */
@@ -2564,7 +2566,7 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 
 Depends on: [`SessionQueryConfig`](../packages/session-query/session-query/src/index.ts)
 
-来源： [`packages/session-query/session-query-sqlite/src/index.ts:92`](../packages/session-query/session-query-sqlite/src/index.ts)
+来源： [`packages/session-query/session-query-sqlite/src/index.ts:93`](../packages/session-query/session-query-sqlite/src/index.ts)
 
 <a id="deepseek-aidsh-session-reference"></a>
 
