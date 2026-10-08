@@ -1,15 +1,13 @@
 /**
- * The JSONL provider's session storage runtime: its concrete write/read
- * handle with a per-handle mutation chain and a routed live write-behind
- * buffer, the in-process bookkeeping that enforces one active writer per
- * session id, and the backend's live event routing and teardown. Deliberately
- * provider-local: the persistence seam exposes only the service and handle
- * contracts, and the shared contract suites pin equivalent observable
- * behavior across providers.
- * Over the 400-line ceiling deliberately: the write handle, the in-process
- * tracker, and the routing/teardown installer are one mutation-chain and
- * close-serialization mechanism; splitting the file would expose its private
- * state to itself.
+ * The JSONL provider's session storage runtime. Reason this file is over the
+ * 400-line ceiling deliberately: the write handle, the in-process tracker,
+ * and the routing/teardown installer are one mutation-chain and
+ * close-serialization mechanism; splitting it would expose private state.
+ * The concrete write/read handle carries a per-handle mutation chain and a
+ * routed live write-behind buffer; the in-process bookkeeping enforces one
+ * active writer per session id. The runtime is provider-local: the persistence
+ * seam exposes only the service and handle contracts, and the shared contract
+ * suites pin equivalent observable behavior across providers.
  * @module
  */
 
