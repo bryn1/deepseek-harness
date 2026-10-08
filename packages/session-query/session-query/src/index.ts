@@ -38,6 +38,7 @@ import type {
   SessionTitleObservationResult,
 } from './types.ts'
 import {
+  SESSION_QUERY_DEFAULT_LIST_REFRESH_MS,
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
   SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
   SESSION_QUERY_READ_WINDOW_MAX,
@@ -63,6 +64,7 @@ export type * from './types.ts'
 export { SessionSearchCursor } from './cursor.ts'
 export type { Config, SessionQueryErrorCode } from './config.ts'
 export {
+  SESSION_QUERY_DEFAULT_LIST_REFRESH_MS,
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
   SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
   SESSION_QUERY_READ_WINDOW_MAX,
@@ -127,7 +129,14 @@ export abstract class SessionQueryEngine extends Service {
         'SESSION_QUERY_INVALID_CONFIG',
       )
     }
-    this._corpus = new SessionCorpus(ctx, persistedReadConcurrency)
+    const listRefreshMs = config.listRefreshMs ?? SESSION_QUERY_DEFAULT_LIST_REFRESH_MS
+    if (!Number.isSafeInteger(listRefreshMs) || listRefreshMs < 1) {
+      throw new SessionQueryError(
+        'session-query: listRefreshMs must be a positive safe integer',
+        'SESSION_QUERY_INVALID_CONFIG',
+      )
+    }
+    this._corpus = new SessionCorpus(ctx, persistedReadConcurrency, listRefreshMs)
     this._observations = new SessionObservationReader(ctx, preparedSessionCacheSize)
   }
 

@@ -11,6 +11,9 @@ export const SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY = 4
 /** Default maximum number of cold prepared-Session observations retained for reuse. */
 export const SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE = 5
 
+/** Default milliseconds between background re-enumerations of the persisted listing. */
+export const SESSION_QUERY_DEFAULT_LIST_REFRESH_MS = 60_000
+
 /** Backend-independent configuration inherited by every session-query implementation. */
 export interface Config {
   /** Maximum accepted raw read context on either side. Defaults to 50. */
@@ -23,6 +26,12 @@ export interface Config {
    * against this bound until released. Defaults to 5.
    */
   preparedSessionCacheSize?: number
+  /**
+   * Milliseconds between background re-enumerations of the persisted-listing
+   * snapshot; out-of-process additions and removals become visible within this
+   * window plus one enumeration. Positive safe integer; defaults to 60000.
+   */
+  listRefreshMs?: number
 }
 
 /** Stable machine-routable failure taxonomy for session reads, traces, and search. */

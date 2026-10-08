@@ -128,6 +128,8 @@ class TestPersistence extends SessionPersistence {
   static readCalls: SessionIdType[] = []
   static listSignals: Array<AbortSignal | undefined> = []
   static readSignals: Array<AbortSignal | undefined> = []
+  /** Settled result of the most recently started enumeration, for awaiting the eager prewarm build. */
+  static listSettled: Promise<void> = Promise.resolve()
 
   static reset(entries: readonly { meta: SessionHeader; events: SessionEvent[] }[] = []): void {
     this.entries = new Map(entries.map(entry => [entry.meta.id, structuredClone(entry)]))
@@ -141,6 +143,7 @@ class TestPersistence extends SessionPersistence {
     this.readCalls = []
     this.listSignals = []
     this.readSignals = []
+    this.listSettled = Promise.resolve()
   }
 
   create(header: SessionHeader): Promise<SessionHandle> {
@@ -166,7 +169,14 @@ class TestPersistence extends SessionPersistence {
   list(options?: { signal?: AbortSignal }): Promise<readonly SessionPersistenceSnapshot[]> {
     TestPersistence.listCalls += 1
     TestPersistence.listSignals.push(options?.signal)
-    if (TestPersistence.listOverride !== undefined) return TestPersistence.listOverride(options?.signal)
+    const call = TestPersistence.enumerate(options?.signal)
+    TestPersistence.listSettled = call.then(() => undefined, () => undefined)
+    return call
+  }
+
+  /** One enumeration attempt over the seeded entries. */
+  private static enumerate(signal?: AbortSignal): Promise<readonly SessionPersistenceSnapshot[]> {
+    if (TestPersistence.listOverride !== undefined) return TestPersistence.listOverride(signal)
     if (TestPersistence.listFailure !== undefined) return rejectUnknown(TestPersistence.listFailure)
     const snapshots = [...TestPersistence.entries.values()].map(entry => ({
       header: structuredClone(entry.meta),
@@ -192,6 +202,21 @@ function expectCode(code: SessionQueryErrorCode): Error {
 function rejectUnknown<T>(reason: unknown): Promise<T> {
   // Exercise containment for an implementation that violates the Error rejection convention.
   return Promise.reject(reason) // oxlint-disable-line typescript/prefer-promise-reject-errors
+}
+
+/**
+ * Mount persistence with its eager prewarm build consumed by a refused
+ * enumeration, then clear the sentinel: the test's own request starts the
+ * shared snapshot build and carries its signal into the first observation,
+ * and the consumed prewarm attempt does not shift the call/signal counters.
+ */
+async function mountColdPersistence(ctx: Context): Promise<void> {
+  TestPersistence.listFailure = new Error('eager prewarm enumeration refused')
+  await ctx.plugin(TestPersistence)
+  await TestPersistence.listSettled
+  TestPersistence.listFailure = undefined
+  TestPersistence.listCalls = 0
+  TestPersistence.listSignals = []
 }
 
 const cancellableSessionListings = [
@@ -237,7 +262,7 @@ describe.each(cancellableSessionListings)('$name cancellation', ({ run }) => {
   it('preserves an exact pre-abort reason without entering persistence', async () => {
     TestPersistence.reset()
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const controller = new AbortController()
     const reason = new Error('session listing cancelled before start')
     controller.abort(reason)
@@ -250,7 +275,7 @@ describe.each(cancellableSessionListings)('$name cancellation', ({ run }) => {
   it('forwards in-flight cancellation and waits for persistence cleanup before rejecting', async () => {
     TestPersistence.reset()
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const controller = new AbortController()
     const reason = new Error('session listing cancelled in flight')
     const started = Promise.withResolvers<undefined>()
@@ -294,7 +319,7 @@ describe.each(cancellableSessionListings)('$name cancellation', ({ run }) => {
   it('preserves cancellation after a persistence implementation ignores the signal', async () => {
     TestPersistence.reset()
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const controller = new AbortController()
     const reason = new Error('session listing cancelled before persistence returned')
     const started = Promise.withResolvers<undefined>()
@@ -319,7 +344,7 @@ describe.each(cancellableExactReads)('$name cancellation', ({ inspects, run }) =
     const persisted = header('pre-aborted-exact-read')
     TestPersistence.reset([{ meta: persisted, events: eventLog() }])
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const controller = new AbortController()
     const reason = new Error('exact read cancelled before start')
     controller.abort(reason)
@@ -333,7 +358,7 @@ describe.each(cancellableExactReads)('$name cancellation', ({ inspects, run }) =
     const persisted = header('cancelled-exact-list')
     TestPersistence.reset([{ meta: persisted, events: eventLog() }])
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const controller = new AbortController()
     const reason = new Error('exact read list cancelled in flight')
     const started = Promise.withResolvers<undefined>()
@@ -380,7 +405,7 @@ describe.each(cancellableExactReads)('$name cancellation', ({ inspects, run }) =
     const entry = { meta: persisted, events: eventLog() }
     TestPersistence.reset([entry])
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const controller = new AbortController()
     const reason = new Error('exact read cancelled while backend ignored signal')
     const started = Promise.withResolvers<undefined>()
@@ -431,7 +456,7 @@ describe.each(cancellableExactReads.filter(read => read.inspects))(
       const persisted = header('cancelled-exact-inspect')
       TestPersistence.reset([{ meta: persisted, events: eventLog() }])
       const ctx = await liveContext()
-      await ctx.plugin(TestPersistence)
+      await mountColdPersistence(ctx)
       const controller = new AbortController()
       const reason = new Error('exact read inspection cancelled in flight')
       const started = Promise.withResolvers<undefined>()
@@ -587,7 +612,7 @@ describe('session-query exact reads', () => {
     ])
     const ctx = await liveContext()
     await ctx.plugin(SessionTitleService, TITLE_SERVICE_CONFIG)
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const signal = new AbortController().signal
     const missing = SessionId('batch-title-missing')
 
@@ -700,7 +725,7 @@ describe('session-query exact reads', () => {
     const persisted = header('stalled-title', 1)
     TestPersistence.reset([{ meta: persisted, events: [] }])
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const controller = new AbortController()
     const reason = new Error('title deadline')
     let started!: () => void
@@ -771,7 +796,7 @@ describe('session-query exact reads', () => {
     const persisted = header('stalled-title-list', 1)
     TestPersistence.reset([{ meta: persisted, events: [] }])
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const controller = new AbortController()
     const reason = new Error('title listing deadline')
     let started!: () => void
@@ -872,7 +897,7 @@ describe('session-query exact reads', () => {
     TestPersistence.reset([{ meta: persisted, events: [] }])
     const mixed = await liveContext()
     const mixedLive = mixed.sessions.create(SessionId('batch-title-mixed-live'))
-    await mixed.plugin(TestPersistence)
+    await mountColdPersistence(mixed)
     TestPersistence.afterList = () => {
       mixed.sessions.create(late.id, { meta: { createdAt: late.createdAt } })
       TestPersistence.afterList = undefined
@@ -1133,12 +1158,19 @@ describe('session-query exact reads', () => {
       events: [{ data: { content: [{ text: 'durable' }] } }],
     })
 
+    // Stored headers are immutable at create, so the snapshot caches them:
+    // an out-of-band mutation reaches the request through a persistence
+    // replacement, the corpus trigger that re-enumerates from disk.
     const sharedEntry = TestPersistence.entries.get(shared.id)!
     sharedEntry.meta = { ...sharedEntry.meta, cwd: '/conflict' }
+    await persistence.dispose()
+    const conflicting = await ctx.plugin(TestPersistence)
     await expect(ctx.sessionQuery.listSessions()).rejects.toThrow(expectCode('SESSION_QUERY_SOURCE_CONFLICT'))
     sharedEntry.meta = { ...sharedEntry.meta, cwd: '/same', delegationDepth: 1 }
+    await conflicting.dispose()
+    const conflictedDepth = await ctx.plugin(TestPersistence)
     await expect(ctx.sessionQuery.listSessions()).rejects.toThrow(expectCode('SESSION_QUERY_SOURCE_CONFLICT'))
-    await persistence.dispose()
+    await conflictedDepth.dispose()
     await expect(ctx.sessionQuery.listSessions()).resolves.toEqual([
       { header: shared, live: true, persisted: false },
     ])
@@ -1156,7 +1188,7 @@ describe('session-query exact reads', () => {
       }),
       { surfaceOp: 'append' },
     )
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     TestPersistence.listFailure = new Error('list unavailable')
     TestPersistence.readFailure = new Error('inspect unavailable')
     const signal = new AbortController().signal

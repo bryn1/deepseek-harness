@@ -6,6 +6,7 @@ import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
 import type { SessionRecord } from './types.ts'
 import { SessionQueryError } from './config.ts'
 import { readColdSessionLog, type ColdSessionLog } from './cold-read.ts'
+import { PersistedSessionSnapshot } from './persisted-snapshot.ts'
 import { assertSessionHeadersCompatible } from './sources.ts'
 
 /** Detached source selected for one exact read. */
@@ -35,36 +36,58 @@ export type LogicalProjectionResult<Value> =
 export class SessionCorpus {
   private _persistence: SessionPersistence | undefined
   private readonly _optionalPersistenceFiber: Fiber
+  private readonly _snapshot: PersistedSessionSnapshot
 
   constructor(
     private readonly _ctx: Context,
     private readonly _persistedReadConcurrency: number,
+    listRefreshMs: number,
   ) {
+    this._snapshot = new PersistedSessionSnapshot(
+      listRefreshMs,
+      (persistence, signal) => listPersisted(persistence, signal),
+      _ctx.logger,
+    )
     this._optionalPersistenceFiber = _ctx.inject(['sessionPersistence'], (childCtx: Context) => {
       const service = childCtx.sessionPersistence
       this._persistence = service
+      this._snapshot.attach(service)
       childCtx.effect(() => () => {
         /* v8 ignore next -- a stale optional-service disposer cannot clear a replacement */
-        if (this._persistence === service) this._persistence = undefined
+        if (this._persistence === service) {
+          this._persistence = undefined
+          this._snapshot.detach()
+        }
       }, 'sessionQuery.persistenceBinding')
     })
     _ctx.effect(() => {
       return () => this._optionalPersistenceFiber.dispose()
     }, 'sessionQuery.optionalPersistence')
+    _ctx.effect(() => {
+      const stop = _ctx.on('session/disposed', (session: Session) => {
+        this._snapshot.markDisposed(session.id)
+      })
+      return () => {
+        stop()
+        this._snapshot.dispose()
+      }
+    }, 'sessionQuery.persistedSnapshot')
   }
 
   /**
    * List the complete logical corpus with live precedence and cloned headers.
+   *
+   * The persisted half comes from the event-invalidated snapshot; only a cold
+   * snapshot (or a background refresh) touches disk.
    * @param signal - optional cancellation for persistence listing.
    * @returns records in deterministic newest-first order.
    */
   async listSessions(signal?: AbortSignal): Promise<SessionRecord[]> {
     signal?.throwIfAborted()
-    const persistence = this._persistence
-    const persisted = persistence === undefined ? [] : await listPersisted(persistence, signal)
+    const persisted = await this._snapshot.view(signal)
     signal?.throwIfAborted()
     const records = new Map<SessionId, SessionRecord>()
-    for (const header of persisted) {
+    for (const header of persisted.values()) {
       records.set(header.id, { header: structuredClone(header), live: false, persisted: true })
     }
     for (const session of this._ctx.sessions.list()) {
@@ -98,7 +121,7 @@ export class SessionCorpus {
     }
     const persistence = this._persistence
     if (persistence === undefined) throw notFound(sessionId)
-    const listed = (await listPersisted(persistence, signal)).find(header => header.id === sessionId)
+    const listed = (await this._snapshot.view(signal)).get(sessionId)
     signal?.throwIfAborted()
     if (listed === undefined) throw notFound(sessionId)
     const loaded = await inspectPersisted(persistence, sessionId, signal)
@@ -120,7 +143,7 @@ export class SessionCorpus {
   }
 
   /**
-   * Project unique logical sources immediately from one persistence listing.
+   * Project unique logical sources immediately from one snapshot membership view.
    *
    * The synchronous projector runs before a persisted worker claims its next id.
    * Full logs are borrowed only for that call and never retained by the batch.
@@ -156,9 +179,9 @@ export class SessionCorpus {
       return orderedResults(ids, resolved)
     }
 
-    let persisted: SessionHeader[]
+    let persistedById: ReadonlyMap<SessionId, SessionHeader>
     try {
-      persisted = await listPersisted(persistence, signal)
+      persistedById = await this._snapshot.view(signal)
       signal?.throwIfAborted()
     } catch (error: unknown) {
       if (signal?.aborted) signal.throwIfAborted()
@@ -167,7 +190,6 @@ export class SessionCorpus {
       }
       return orderedResults(ids, resolved)
     }
-    const persistedById = new Map(persisted.map(header => [header.id, header]))
     const resolvePersisted = async (sessionId: SessionId): Promise<void> => {
       const listed = persistedById.get(sessionId)
       if (listed === undefined) {

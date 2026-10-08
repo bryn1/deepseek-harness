@@ -1,7 +1,7 @@
 import { createUserMessage, createMessage } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, type Fiber } from '@deepseek-ai/cordis'
 import SessionStore, { SessionLogOffset, SessionSeq, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { Session, SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
@@ -89,6 +89,8 @@ class TracePersistence extends SessionPersistence {
   static listFailure: Error | undefined
   static readFailure: Error | undefined
   static afterList: (() => void) | undefined
+  /** Settled result of the most recently started enumeration, for awaiting the eager prewarm build. */
+  static listSettled: Promise<void> = Promise.resolve()
 
   static reset(entries: readonly { meta: SessionHeader; events: SessionEvent[] }[] = []): void {
     this.entries = new Map(entries.map(entry => [entry.meta.id, structuredClone(entry)]))
@@ -97,6 +99,7 @@ class TracePersistence extends SessionPersistence {
     this.listFailure = undefined
     this.readFailure = undefined
     this.afterList = undefined
+    this.listSettled = Promise.resolve()
   }
 
   create(header: SessionHeader): Promise<SessionHandle> {
@@ -124,6 +127,13 @@ class TracePersistence extends SessionPersistence {
 
   list(): Promise<readonly SessionPersistenceSnapshot[]> {
     TracePersistence.listCalls += 1
+    const call = TracePersistence.enumerate()
+    TracePersistence.listSettled = call.then(() => undefined, () => undefined)
+    return call
+  }
+
+  /** One enumeration attempt over the seeded entries. */
+  private static enumerate(): Promise<readonly SessionPersistenceSnapshot[]> {
     if (TracePersistence.listFailure !== undefined) return Promise.reject(TracePersistence.listFailure)
     const result = [...TracePersistence.entries.values()].map(entry => ({
       header: structuredClone(entry.meta),
@@ -140,6 +150,21 @@ async function queryContext(): Promise<Context> {
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(TestSessionQueryEngine)
   return ctx
+}
+
+/**
+ * Mount persistence with its eager prewarm build consumed by a refused
+ * enumeration, then clear the sentinel: the test's own request starts the
+ * shared snapshot build and the consumed prewarm attempt does not shift the
+ * call counters asserted below.
+ */
+async function mountColdPersistence(ctx: Context): Promise<Fiber> {
+  TracePersistence.listFailure = new Error('eager prewarm enumeration refused')
+  const persistence = await ctx.plugin(TracePersistence)
+  await TracePersistence.listSettled
+  TracePersistence.listFailure = undefined
+  TracePersistence.listCalls = 0
+  return persistence
 }
 
 function expectCode(code: SessionQueryErrorCode): Error {
@@ -271,7 +296,7 @@ describe('session lineage tracing', () => {
     const durable = header('durable')
     TracePersistence.reset([{ meta: durable, events: [appendEvent(0)] }])
     const ctx = await queryContext()
-    await ctx.plugin(TracePersistence)
+    const persistence = await mountColdPersistence(ctx)
 
     await expect(ctx.sessionQuery.traceSession(durable.id)).resolves.toMatchObject({
       target: { live: false, persisted: true },
@@ -280,7 +305,11 @@ describe('session lineage tracing', () => {
     expect(TracePersistence.listCalls).toBe(1)
     expect(TracePersistence.readCalls).toBe(0)
 
+    // The warm snapshot answers without enumerating; a persistence failure
+    // reaches the request through the re-enumeration a replacement triggers.
     TracePersistence.listFailure = new Error('unavailable')
+    await persistence.dispose()
+    await ctx.plugin(TracePersistence)
     await expect(ctx.sessionQuery.traceSession(durable.id))
       .rejects.toThrow(expectCode('SESSION_QUERY_PERSISTENCE_FAILED'))
   })
@@ -397,7 +426,7 @@ describe('session event tracing', () => {
 
     TracePersistence.reset([{ meta: durable, events: [appendEvent(0)] }])
     const failedCtx = await queryContext()
-    await failedCtx.plugin(TracePersistence)
+    const failedPersistence = await mountColdPersistence(failedCtx)
     TracePersistence.listFailure = new Error('list unavailable')
     await expect(failedCtx.sessionQuery.traceEvent({ sessionId: durable.id, seq: SessionSeq(0) }))
       .rejects.toThrow(expectCode('SESSION_QUERY_PERSISTENCE_FAILED'))
@@ -405,7 +434,12 @@ describe('session event tracing', () => {
     TracePersistence.readFailure = new Error('inspect unavailable')
     await expect(failedCtx.sessionQuery.traceEvent({ sessionId: durable.id, seq: SessionSeq(0) }))
       .rejects.toThrow(expectCode('SESSION_QUERY_PERSISTENCE_FAILED'))
+    // The conflict rides a fresh enumeration: afterList mutates the entry
+    // after its header was snapshotted, so the inspection reports the mutated
+    // header against the enumerated one.
     TracePersistence.readFailure = undefined
+    await failedPersistence.dispose()
+    await mountColdPersistence(failedCtx)
     TracePersistence.afterList = () => {
       mutableHeader(TracePersistence.entries.get(durable.id)!.meta).cwd = '/changed'
     }

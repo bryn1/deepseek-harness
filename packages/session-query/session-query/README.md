@@ -59,6 +59,7 @@ The inherited knobs are set through the mounted backend's config:
 | `readWindowMax` | `50` | Maximum `before`/`after` raw events accepted by `readEvent` |
 | `persistedReadConcurrency` | `4` | Concurrent persisted-log reads in one batch title read |
 | `preparedSessionCacheSize` | `5` | Cold prepared-Session observations retained for reuse across `observeSession` reads |
+| `listRefreshMs` | `60000` | Background TTL re-enumeration interval of the persisted corpus snapshot |
 
 ### Failures and recovery
 
@@ -104,7 +105,9 @@ The decision history lives in the [unified service decision](../../../.agents/no
 
 ### Corpus resolution
 
-`SessionCorpus` binds optional `ctx.sessionPersistence` through a fiber and resolves each read live-first: a known live target is snapshotted without consulting persistence; otherwise the session is listed, read completely through a short-lived read handle, and re-checked for a live attachment before cloning. A cold log whose writer crashed mid-turn is balanced in memory with `interruptedTurnClosers` — persistence is never mutated by a read. Header compatibility is asserted between listed and loaded observations. Batch title reads run one metadata listing and bounded-concurrency reads, isolating per-session failures while cancellation rejects the whole batch.
+`SessionCorpus` binds optional `ctx.sessionPersistence` through a fiber and resolves each read live-first: a known live target is snapshotted without consulting persistence; otherwise the persisted header is resolved from the corpus snapshot, the session log is read completely through a short-lived read handle, and the read re-checks for a live attachment before cloning. A cold log whose writer crashed mid-turn is balanced in memory with `interruptedTurnClosers` — persistence is never mutated by a read. Header compatibility is asserted between the snapshot's header and the loaded observation. Batch title reads share one snapshot and run bounded-concurrency log reads, isolating per-session failures while cancellation rejects the whole batch.
+
+The snapshot's persisted half is an in-memory index of stored headers: built eagerly when persistence mounts, shared by concurrent requests, and swapped atomically when a build completes. A disposal reconciles after the persistence durability barrier settles any in-flight close, so a never-materialized session never enters the persisted half; a barrier or `stat` failure marks the snapshot stale and arms a rebuild, and a build that races an unresolved disposal is discarded rather than published. Requests during a rebuild are answered from the previous snapshot, never from a partial build; a persistence service that detaches while a caller waits answers with the persisted half absent rather than waiting on a build that can no longer run. Stored headers are immutable at create, so a snapshot row is absent or present, never wrongly valued; a session the Session Store never attached — another process's file, or a direct write through the persistence service — becomes visible at the next `listRefreshMs` TTL refresh, at a persistence replacement, or at its disposal reconciliation.
 
 ### Observation cache
 
@@ -151,6 +154,7 @@ These limits define when this package is a poor fit or needs special operational
 - **No provider coordinator or fallback** — the service is abstract over search, so a composition must mount a concrete backend; there is no search-provider registry or fallback implementation.
 - **Exact reads replay whole logs** — `readSession`, `readSurface`, `filterEvents`, and event traces load and validate the complete logical log, so very large histories pay full inspection per call; `listSessions` stays lightweight.
 - **Literal text scan, not full-text search** — the `text` filter scans extracted documents with a regular expression and does not rank; ranked search requires the mounted backend.
+- **Persisted listings lag out-of-band writers** — the snapshot's persisted half refreshes on service events (mount, disposal reconciliation, replacement) and on the `listRefreshMs` TTL; a session that another process, or a direct persistence-service write this process never attached, made durable appears at the next refresh, not at its durability point.
 
 <a id="dev-note"></a>
 ### Dev Note
