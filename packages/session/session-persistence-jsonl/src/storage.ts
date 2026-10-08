@@ -6,6 +6,10 @@
  * provider-local: the persistence seam exposes only the service and handle
  * contracts, and the shared contract suites pin equivalent observable
  * behavior across providers.
+ * Over the 400-line ceiling deliberately: the write handle, the in-process
+ * tracker, and the routing/teardown installer are one mutation-chain and
+ * close-serialization mechanism; splitting the file would expose its private
+ * state to itself.
  * @module
  */
 
@@ -501,7 +505,10 @@ export class JsonlBackendTracker {
 
   /**
    * Drain and flush every active write handle — the service-wide durability
-   * barrier behind `SessionPersistence.flush`.
+   * barrier behind `SessionPersistence.flush`. A handle whose `close()` is in
+   * flight is joined to that close (its only serializer of the release step),
+   * so the barrier holds: every handle active at the call has settled by the
+   * time this returns, successfully or not.
    * @throws {AggregateError} naming each session whose flush failed; the
    *   remaining handles still flush.
    */
@@ -513,9 +520,20 @@ export class JsonlBackendTracker {
         await writer.drainLive()
         await writer.flush()
       } catch (error: unknown) {
-        // A handle closed during the sweep counts as flushed: close itself
-        // drained the routed buffer durably before refusing this flush.
-        if (error instanceof SessionHandleClosedError) continue
+        if (error instanceof SessionHandleClosedError) {
+          // A closing handle's flush was its own close's: join that memoized
+          // close to its end instead of assuming the release already ran. Its
+          // rejection (release failed after the flush point) is this barrier's
+          // failure too.
+          const closeFailure = await writer.close().then(
+            () => undefined,
+            (closeError: unknown): unknown => closeError,
+          )
+          if (closeFailure !== undefined) errors.push(closeFailure)
+          continue
+        }
+        // A still-open handle whose persist failed keeps its batch buffered
+        // for the documented retry; only its own `flush()` may close it.
         errors.push(error)
       }
     }
