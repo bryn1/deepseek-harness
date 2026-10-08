@@ -28,6 +28,7 @@
   config:
     path: ':memory:'
     openAt: never
+    listRefreshMs: 60000
 
 - id: tools
   config:

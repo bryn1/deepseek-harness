@@ -135,6 +135,8 @@ class TestPersistence extends SessionPersistence {
   static reads = new Map<SessionIdType, number>()
   static readSignals: Array<AbortSignal | undefined> = []
   static listSignals: Array<AbortSignal | undefined> = []
+  /** Settled result of the most recently started enumeration, for awaiting the eager prewarm build. */
+  static listSettled: Promise<void> = Promise.resolve()
   static readEffect: ((
     entry: { meta: SessionHeader; events: SessionEvent[] },
     signal?: AbortSignal,
@@ -158,6 +160,7 @@ class TestPersistence extends SessionPersistence {
     this.listEffect = undefined
     this.listOverride = undefined
     this.failure = undefined
+    this.listSettled = Promise.resolve()
   }
 
   static set(entry: { meta: SessionHeader; events: SessionEvent[] }): void {
@@ -189,6 +192,13 @@ class TestPersistence extends SessionPersistence {
   }
 
   async list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]> {
+    const call = TestPersistence.enumerate(options)
+    TestPersistence.listSettled = call.then(() => undefined, () => undefined)
+    return call
+  }
+
+  /** One enumeration attempt over the seeded entries. */
+  private static async enumerate(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]> {
     TestPersistence.listSignals.push(options?.signal)
     TestPersistence.listStarted?.()
     await TestPersistence.listGate
@@ -209,6 +219,20 @@ async function liveContext(config: ConstructorParameters<typeof SqliteSessionQue
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SqliteSessionQueryEngine, config)
   return ctx
+}
+
+/**
+ * Mount persistence with its eager prewarm build consumed by a refused
+ * enumeration, then clear the sentinel: the test's own search performs the
+ * first observation, the consumed prewarm attempt leaves armed one-shot list
+ * effects intact, and the signal assertions below stay caller-pinned.
+ */
+async function mountColdPersistence(ctx: Context): Promise<void> {
+  TestPersistence.failure = new Error('eager prewarm enumeration refused')
+  await ctx.plugin(TestPersistence)
+  await TestPersistence.listSettled
+  TestPersistence.failure = undefined
+  TestPersistence.listSignals = []
 }
 
 describe('SQLite session search', () => {
@@ -1473,7 +1497,7 @@ describe('SQLite schema, cancellation, and real persistence integration', () => 
       const durable = header(`signal-${scope}`)
       TestPersistence.reset([{ meta: durable, events: messageEvents('signal needle') }])
       const ctx = await liveContext()
-      await ctx.plugin(TestPersistence)
+      await mountColdPersistence(ctx)
       const controller = new AbortController()
 
       const result = scope === 'sessions'
@@ -1495,7 +1519,7 @@ describe('SQLite schema, cancellation, and real persistence integration', () => 
       const durable = header(`pre-aborted-${scope}`)
       TestPersistence.reset([{ meta: durable, events: messageEvents('needle') }])
       const ctx = await liveContext()
-      await ctx.plugin(TestPersistence)
+      await mountColdPersistence(ctx)
       const controller = new AbortController()
       controller.abort(new Error(`pre-aborted ${scope}`))
 
@@ -1516,7 +1540,7 @@ describe('SQLite schema, cancellation, and real persistence integration', () => 
     const durable = header('cooperative-list-abort')
     TestPersistence.reset([{ meta: durable, events: messageEvents('needle') }])
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const started = Promise.withResolvers<AbortSignal>()
     const abortObserved = Promise.withResolvers<undefined>()
     const cleanup = Promise.withResolvers<undefined>()
@@ -1554,7 +1578,7 @@ describe('SQLite schema, cancellation, and real persistence integration', () => 
     const durable = header('serialized-list-abort')
     TestPersistence.reset([{ meta: durable, events: messageEvents('needle') }])
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const cleanup = Promise.withResolvers<undefined>()
     const started = Promise.withResolvers<undefined>()
     TestPersistence.listGate = cleanup.promise
@@ -1597,7 +1621,7 @@ describe('SQLite schema, cancellation, and real persistence integration', () => 
       { meta: second, events: messageEvents('second needle') },
     ])
     const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
+    await mountColdPersistence(ctx)
     const started = Promise.withResolvers<AbortSignal>()
     const cleanup = Promise.withResolvers<undefined>()
     TestPersistence.readEffect = async (_entry, signal) => {

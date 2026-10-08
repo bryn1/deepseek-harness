@@ -151,6 +151,9 @@
       config:
         path: ':memory:'
         openAt: never
+        # Persisted-listing snapshot TTL; deployments restate it here to trade
+        # out-of-band writer visibility against background enumeration load.
+        listRefreshMs: 60000
 
     # Shared projection registry: subagent catalog identity (mode/label) folds
     # through its registered units, so the `list_agents` surface below fails

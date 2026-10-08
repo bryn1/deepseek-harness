@@ -37,6 +37,23 @@ function registerTurnBoundary(ctx: Context): void {
   ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
 }
 
+/**
+ * Retries a tool call while the persisted-snapshot background refresh
+ * converges a session the test wrote through the persistence service outside
+ * the session store, then returns the last result for the assertions below.
+ */
+async function untilToolReady<T extends { isError: boolean }>(
+  call: () => Promise<T>,
+  budgetMs = 4_000,
+): Promise<T> {
+  const deadline = Date.now() + budgetMs
+  for (;;) {
+    const result = await call()
+    if (!result.isError || Date.now() >= deadline) return result
+    await new Promise<void>((resolve) => { setTimeout(resolve, 25) })
+  }
+}
+
 describe('tool-session-query with the real SQLite provider', () => {
   it('searches live prior-step history and a persisted same-workspace log', { timeout: 20_000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-tool-session-query-'))
@@ -49,7 +66,7 @@ describe('tool-session-query with the real SQLite provider', () => {
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
-    await ctx.plugin(SqliteSessionQueryEngine, { path: join(root, 'session-query.db') })
+    await ctx.plugin(SqliteSessionQueryEngine, { path: join(root, 'session-query.db'), listRefreshMs: 40 })
     await ctx.plugin(ToolSessionQuery)
 
     const persisted = SessionId('persisted')
@@ -98,10 +115,10 @@ describe('tool-session-query with the real SQLite provider', () => {
     expect(sessions.isError).toBe(false)
     expect(sessions.content.map(block => block.type === 'text' ? block.text : '').join('\n'))
       .toContain('Session persisted')
-    const persistedEvents = await execute('session_event_search', {
+    const persistedEvents = await untilToolReady(() => execute('session_event_search', {
       session_id: persisted,
       query: 'persisted integration needle',
-    })
+    }))
     expect(persistedEvents.isError).toBe(false)
     expect(persistedEvents.content.map(block => block.type === 'text' ? block.text : '').join('\n'))
       .toContain('seq 0')
@@ -122,7 +139,7 @@ describe('tool-session-query with the real SQLite provider', () => {
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
-    await ctx.plugin(SqliteSessionQueryEngine, { path: join(root, 'session-query.db') })
+    await ctx.plugin(SqliteSessionQueryEngine, { path: join(root, 'session-query.db'), listRefreshMs: 40 })
     await ctx.plugin(ToolSessionQuery)
 
     const base = Date.parse('2026-07-24T00:00:00.000Z')
@@ -190,11 +207,11 @@ describe('tool-session-query with the real SQLite provider', () => {
       agent: fakeAgent(caller),
     })
 
-    const lowerBound = await execute({
+    const lowerBound = await untilToolReady(() => execute({
       session_id: persisted,
       query: 'fractional integration needle',
       time_from: '2026-07-24T00:00:00.12300001Z',
-    })
+    }))
     expect(lowerBound.isError).toBe(false)
     const lowerText = lowerBound.content.map(block => block.type === 'text' ? block.text : '').join('\n')
     expect(lowerText).toContain('seq 1')
