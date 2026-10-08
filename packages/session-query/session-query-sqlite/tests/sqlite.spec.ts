@@ -27,6 +27,7 @@ import SqliteSessionQueryEngine, {
   SESSION_QUERY_SQLITE_SCHEMA_VERSION,
 } from '@deepseek-ai/dsh-session-query-sqlite'
 import {
+  SESSION_QUERY_DEFAULT_LIST_REFRESH_MS,
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
   SessionQueryError,
   SessionSearchCursor,
@@ -264,6 +265,23 @@ describe('SQLite session search', () => {
       path: ':memory:',
       openAt: 'later' as never,
     })).toThrow()
+  })
+
+  it('defaults, validates, and forwards listRefreshMs to the inherited snapshot TTL', async () => {
+    expect(new SqliteSessionQueryEngine.Config({ path: ':memory:' }).listRefreshMs)
+      .toBe(SESSION_QUERY_DEFAULT_LIST_REFRESH_MS)
+    for (const listRefreshMs of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => new SqliteSessionQueryEngine.Config({ path: ':memory:', listRefreshMs })).toThrow()
+    }
+
+    const defaultCtx = await liveContext()
+    expect((defaultCtx.sessionQuery as SqliteSessionQueryEngine).config.listRefreshMs)
+      .toBe(SESSION_QUERY_DEFAULT_LIST_REFRESH_MS)
+    await defaultCtx.fiber.dispose()
+
+    const forwarded = await liveContext({ path: ':memory:', listRefreshMs: 40 })
+    expect((forwarded.sessionQuery as SqliteSessionQueryEngine).config.listRefreshMs).toBe(40)
+    await forwarded.fiber.dispose()
   })
 
   it('mounts and disposes first-search mode without opening its database', async () => {
