@@ -188,7 +188,7 @@ describe.skipIf(MODE === 'record')('web e2e: composer interrupt for a running co
     onTestFailed(() => saveFailureShot(page, 'web-e2e-subagent-interrupt-offline'))
     // The parent is unavailable in the Session list while the child stays live.
     let sawParent = false
-    await page.routeWebSocket('**/api/remote.mux', createMuxListInterceptor((listPage) => {
+    const interceptor = createMuxListInterceptor((listPage) => {
       if (!listPage.items.some(item => item.sessionId === parent.id)) return undefined
       sawParent = true
       return {
@@ -197,7 +197,8 @@ describe.skipIf(MODE === 'record')('web e2e: composer interrupt for a running co
           ? { ...item, agentAvailable: false }
           : item),
       }
-    }))
+    })
+    await page.routeWebSocket('**/api/remote.mux', interceptor)
     try {
       const warningStart = tripwire.warnings.length
       await page.reload({ waitUntil: 'load' })
@@ -263,6 +264,7 @@ describe.skipIf(MODE === 'record')('web e2e: composer interrupt for a running co
       await waitFor(() => existsSync(rearmedReadyFile), 'the re-armed child turn to open')
       expect(scaffold.ctx.agents.get(childId)?.status).toBe('running')
     } finally {
+      interceptor.release()
       await page.unrouteAll({ behavior: 'wait' })
     }
   }, 60_000)

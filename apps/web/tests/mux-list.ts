@@ -12,6 +12,9 @@ import type { SessionListPage } from '@deepseek-ai/dsh-api-session-controller/ty
 /** The single stream id this drain opens on each carrier. */
 const streamId = 'session-list-drain'
 
+/** Remote endpoint path carried on the uplink `open` frame of the catalog stream. */
+const sessionListEndpoint = 'session/list'
+
 /** One mux frame on a stream; `endpoint` rides the uplink `open` frame. */
 type MuxFrame = {
   type: string
@@ -106,15 +109,25 @@ export function drainSessionListViaMux(
 /**
  * A Playwright WebSocket route handler that observes or rewrites the downlink
  * pages of the browser's `session/list` streams.
+ *
+ * `page.unrouteAll()` does not retire `routeWebSocket` registrations, so the
+ * handler outlives its test and re-attaches to every later carrier. `release`
+ * makes it a pure pass-through, keeping any rewrite scoped to its own test.
  */
-export type MuxListInterceptor = (route: WebSocketRoute) => void
+export interface MuxListInterceptor {
+  (route: WebSocketRoute): void
+  /** Stop observing/rewriting: later frames pass through untouched. */
+  release(): void
+}
 
 /**
  * Build a route handler that forwards every frame untouched and in order, and
- * runs `collect` for each downlink page of a `session/list` stream. Frames of
- * the list stream stay buffered while a returned promise is pending, so a
- * held page pauses only the catalog — exactly the seam a restore-gating test
- * needs. `handle` returning a replacement page rewrites that frame.
+ * runs `collect` for each downlink page of a `session/list` stream. Every
+ * frame of a list stream — pages and the stream's own `end`/`error` — is
+ * sequenced through one arrival-ordered tail while a returned promise is
+ * pending, so a held page pauses the catalog without the carrier's terminal
+ * frame overtaking it; exactly the seam a restore-gating test needs.
+ * `handle` returning a replacement page rewrites that frame.
  * @param handle - observes each streamed page; returns a replacement page, a
  * promise of one (holding the frame until it settles), or undefined to pass
  * the frame through unchanged.
@@ -123,34 +136,44 @@ export type MuxListInterceptor = (route: WebSocketRoute) => void
 export function createMuxListInterceptor(
   handle: (listPage: SessionListPage) => SessionListPage | undefined | Promise<SessionListPage | undefined>,
 ): MuxListInterceptor {
-  return (route) => {
+  let released = false
+  const interceptor: MuxListInterceptor = Object.assign((route: WebSocketRoute): void => {
     const server = route.connectToServer()
     const listStreams = new Set<string>()
+    let tail: Promise<unknown> = Promise.resolve()
     // Uplink frames carry the `open`; a set handler owns this direction, so it
     // forwards every message to the Host after recording list opens.
     route.onMessage((message) => {
       const frame = JSON.parse(String(message)) as MuxFrame
-      if (frame.type === 'open' && frame.endpoint === 'session/list') listStreams.add(frame.streamId)
+      if (frame.type === 'open' && frame.endpoint === sessionListEndpoint) listStreams.add(frame.streamId)
       server.send(message)
     })
     // Downlink frames carry the pages; this handler owns that direction.
     server.onMessage((message) => {
       const frame = JSON.parse(String(message)) as MuxFrame
-      if (frame.type !== 'item' || !listStreams.has(frame.streamId)) {
+      if (!listStreams.has(frame.streamId)) {
         route.send(message)
         return
       }
-      const listed = frame.value as SessionListPage
-      const patched = handle(listed)
-      if (!(patched instanceof Promise)) {
-        route.send(patched === undefined ? message : JSON.stringify({ ...frame, value: patched }))
+      if (released) {
+        route.send(message)
         return
       }
-      void patched.then((settled) => {
+      tail = tail.then(async () => {
+        if (frame.type !== 'item') {
+          route.send(message)
+          return
+        }
+        const settled = await handle(frame.value as SessionListPage)
         route.send(settled === undefined ? message : JSON.stringify({ ...frame, value: settled }))
       })
     })
-  }
+  }, {
+    release(): void {
+      released = true
+    },
+  })
+  return interceptor
 }
 
 /**

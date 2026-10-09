@@ -1492,7 +1492,7 @@ async function persistSeedSession(
  * @param scaffold - booted scaffold whose host answers the Remote listing.
  * @param id - session id the seed materialized.
  */
-async function waitForSeededListing(scaffold: WebScaffold, id: SessionId): Promise<void> {
+export async function waitForSeededListing(scaffold: WebScaffold, id: SessionId): Promise<void> {
   const deadline = Date.now() + 30_000
   for (;;) {
     const pages = await scaffold.hostSessionList()

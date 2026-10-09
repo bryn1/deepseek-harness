@@ -15,7 +15,7 @@ import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import {
   acknowledgeReloadConnectionLoss, captureExpandedTurnProcessAria, captureStableAria,
   compareOrRefreshGolden,
-  launchWebScaffold, readPersistedEvents, selectedSessionFixture, watchConsole,
+  launchWebScaffold, readPersistedEvents, selectedSessionFixture, watchConsole, waitForSeededListing,
   webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
 import { createMuxListInterceptor } from './mux-list.ts'
@@ -209,6 +209,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     await oneShotHandle.close()
     scaffold.ctx.sessionProjectionCache.coldSnapshot(oneShotHeader, SessionLogOffset(0), oneShotEvents)
     await waitForCacheRow(scaffold, oneShotHeader)
+    await waitForSeededListing(scaffold, oneShotId)
     await page.getByRole('button', { name: '1 subagent', exact: true }).waitFor({ timeout: 15_000 })
     const catalogReads = apiCalls.filter(path => path === '/api/session/projections').length
     parent.session.append('subagent/catalog', {
@@ -273,6 +274,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     await grandchildHandle.close()
     scaffold.ctx.sessionProjectionCache.coldSnapshot(grandchildHeader, SessionLogOffset(0), grandchildEvents)
     await waitForCacheRow(scaffold, grandchildHeader)
+    await waitForSeededListing(scaffold, grandchildId)
     const childHandle = await scaffold.ctx.sessionPersistence.open(childId, 'write')
     const childHeader = childHandle.header
     const childInheritedEventCount = childHandle.inheritedEventCount
@@ -451,10 +453,11 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     let requested = false
     let releaseCatalog = (): void => {}
     const catalogHeld = new Promise<void>((resolve) => { releaseCatalog = resolve })
-    await page.routeWebSocket('**/api/remote.mux', createMuxListInterceptor((listPage) => {
+    const interceptor = createMuxListInterceptor((listPage) => {
       requested = true
       return catalogHeld.then(() => listPage)
-    }))
+    })
+    await page.routeWebSocket('**/api/remote.mux', interceptor)
 
     const warningStart = tripwire.warnings.length
     try {
@@ -472,6 +475,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
       acknowledgeReloadConnectionLoss(tripwire, warningStart)
     } finally {
       releaseCatalog()
+      interceptor.release()
       await page.unrouteAll({ behavior: 'wait' })
     }
   })
