@@ -18,7 +18,7 @@ import {
   launchWebScaffold, readPersistedEvents, selectedSessionFixture, watchConsole,
   webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { interceptMuxSessionList } from './mux-list.ts'
+import { createMuxListInterceptor } from './mux-list.ts'
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot, writeComposerDraft } from './support.ts'
 
 const BASE_FIXTURE = fileURLToPath(new URL('../../../snapshots/web/live-interactions/session.v3.jsonl', import.meta.url))
@@ -451,10 +451,10 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     let requested = false
     let releaseCatalog = (): void => {}
     const catalogHeld = new Promise<void>((resolve) => { releaseCatalog = resolve })
-    interceptMuxSessionList(page, (listPage) => {
+    await page.routeWebSocket('**/api/remote.mux', createMuxListInterceptor((listPage) => {
       requested = true
       return catalogHeld.then(() => listPage)
-    })
+    }))
 
     const warningStart = tripwire.warnings.length
     try {

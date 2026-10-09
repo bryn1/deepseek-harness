@@ -580,7 +580,12 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // off (`openAt: never`, pinned by apps/cli/tests/lazy-search-startup):
     // the seeded-session scenarios navigate by content search, and these e2e
     // runs are the assembled coverage for the opt-in search path.
-    { id: 'session-query-sqlite', config: { path: ':memory:', openAt: 'first-search' } },
+    // The e2e seed writes JSONL artifacts through a detached persistence
+    // context, so it never touches the booted tree's event bus. The snapshot's
+    // documented out-of-band contract makes such a write visible at the next
+    // `listRefreshMs` TTL refresh; the scaffold shortens that TTL so seeding
+    // converges on the lane's own timing rather than the shipped 60s.
+    { id: 'session-query-sqlite', config: { path: ':memory:', openAt: 'first-search', listRefreshMs: 1_000 } },
     // storage-json's yml root is anchored to the real $DSH_HOME; pin the row
     // to an absolute temp root (removed with the workspace at close) so tests
     // never write the user's harness home.
@@ -1454,6 +1459,10 @@ export async function seedSession(
     return { ...event, time }
   })
   await persistSeedSession(scaffold, meta, materializedEvents)
+  // Out-of-band seeding becomes visible through the snapshot TTL (see the
+  // scaffold's `listRefreshMs` override); navigation must wait for that
+  // convergence or the browser's boot-time catalog legitimately misses the row.
+  await waitForSeededListing(scaffold, meta.id)
   return meta.id
 }
 
@@ -1473,6 +1482,25 @@ async function persistSeedSession(
     await handle.close()
   } finally {
     await seeder.fiber.dispose()
+  }
+}
+
+/**
+ * Wait until the booted host's Session listing carries a seeded session id.
+ * A seed lands as an out-of-band write, so visibility arrives with the
+ * snapshot's `listRefreshMs` TTL refresh, not at the write's durability point.
+ * @param scaffold - booted scaffold whose host answers the Remote listing.
+ * @param id - session id the seed materialized.
+ */
+async function waitForSeededListing(scaffold: WebScaffold, id: SessionId): Promise<void> {
+  const deadline = Date.now() + 30_000
+  for (;;) {
+    const pages = await scaffold.hostSessionList()
+    if (pages.some(page => page.items.some(item => String(item.sessionId) === String(id)))) return
+    if (Date.now() > deadline) {
+      throw new Error(`seeded session ${String(id)} did not appear in the host listing within 30s`)
+    }
+    await new Promise(resolveTimer => setTimeout(resolveTimer, 150))
   }
 }
 

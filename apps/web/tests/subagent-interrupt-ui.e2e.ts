@@ -25,7 +25,7 @@ import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, readPersistedEvents, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { interceptMuxSessionList } from './mux-list.ts'
+import { createMuxListInterceptor } from './mux-list.ts'
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
 
 const BASE_FIXTURE = fileURLToPath(new URL('../../../snapshots/web/live-interactions/session.v3.jsonl', import.meta.url))
@@ -188,7 +188,7 @@ describe.skipIf(MODE === 'record')('web e2e: composer interrupt for a running co
     onTestFailed(() => saveFailureShot(page, 'web-e2e-subagent-interrupt-offline'))
     // The parent is unavailable in the Session list while the child stays live.
     let sawParent = false
-    interceptMuxSessionList(page, (listPage) => {
+    await page.routeWebSocket('**/api/remote.mux', createMuxListInterceptor((listPage) => {
       if (!listPage.items.some(item => item.sessionId === parent.id)) return undefined
       sawParent = true
       return {
@@ -197,7 +197,7 @@ describe.skipIf(MODE === 'record')('web e2e: composer interrupt for a running co
           ? { ...item, agentAvailable: false }
           : item),
       }
-    })
+    }))
     try {
       const warningStart = tripwire.warnings.length
       await page.reload({ waitUntil: 'load' })

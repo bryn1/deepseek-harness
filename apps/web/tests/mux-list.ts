@@ -6,7 +6,7 @@
  */
 
 import WebSocket from 'ws'
-import type { Page } from 'playwright'
+import type { WebSocketRoute } from 'playwright'
 import type { SessionListPage } from '@deepseek-ai/dsh-api-session-controller/types'
 
 /** The single stream id this drain opens on each carrier. */
@@ -104,29 +104,38 @@ export function drainSessionListViaMux(
 }
 
 /**
- * Hold or rewrite downlink frames of the page's `session/list` streams.
- * The interceptor forwards every other frame untouched and in order; frames
- * of the list stream are buffered while `handle` is pending, so a held page
- * pauses only the catalog — exactly the seam a restore-gating test needs.
- * @param page - browser page to route.
+ * A Playwright WebSocket route handler that observes or rewrites the downlink
+ * pages of the browser's `session/list` streams.
+ */
+export type MuxListInterceptor = (route: WebSocketRoute) => void
+
+/**
+ * Build a route handler that forwards every frame untouched and in order, and
+ * runs `collect` for each downlink page of a `session/list` stream. Frames of
+ * the list stream stay buffered while a returned promise is pending, so a
+ * held page pauses only the catalog — exactly the seam a restore-gating test
+ * needs. `handle` returning a replacement page rewrites that frame.
  * @param handle - observes each streamed page; returns a replacement page, a
  * promise of one (holding the frame until it settles), or undefined to pass
  * the frame through unchanged.
+ * @returns the WebSocket route handler to register on the page.
  */
-export function interceptMuxSessionList(
-  page: Page,
+export function createMuxListInterceptor(
   handle: (listPage: SessionListPage) => SessionListPage | undefined | Promise<SessionListPage | undefined>,
-): void {
-  void page.routeWebSocket('**/api/remote.mux', (route) => {
+): MuxListInterceptor {
+  return (route) => {
     const server = route.connectToServer()
     const listStreams = new Set<string>()
+    // Uplink frames carry the `open`; a set handler owns this direction, so it
+    // forwards every message to the Host after recording list opens.
+    route.onMessage((message) => {
+      const frame = JSON.parse(String(message)) as MuxFrame
+      if (frame.type === 'open' && frame.endpoint === 'session/list') listStreams.add(frame.streamId)
+      server.send(message)
+    })
+    // Downlink frames carry the pages; this handler owns that direction.
     server.onMessage((message) => {
       const frame = JSON.parse(String(message)) as MuxFrame
-      if (frame.type === 'open' && frame.endpoint === 'session/list') {
-        listStreams.add(frame.streamId)
-        route.send(message)
-        return
-      }
       if (frame.type !== 'item' || !listStreams.has(frame.streamId)) {
         route.send(message)
         return
@@ -141,5 +150,23 @@ export function interceptMuxSessionList(
         route.send(settled === undefined ? message : JSON.stringify({ ...frame, value: settled }))
       })
     })
+  }
+}
+
+/**
+ * Build a pass-through route handler that resolves `complete` with every
+ * collected `session/list` page once the completion frame passes through.
+ * This is the RPC-level signal that the sidebar baseline landed.
+ * @param complete - receives the page frames in arrival order.
+ * @returns the WebSocket route handler to register on the page.
+ */
+export function createMuxListCollector(
+  complete: (pages: SessionListPage[]) => void,
+): MuxListInterceptor {
+  const pages: SessionListPage[] = []
+  return createMuxListInterceptor((listPage) => {
+    pages.push(listPage)
+    if (listPage.done) complete([...pages])
+    return undefined
   })
 }

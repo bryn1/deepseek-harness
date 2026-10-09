@@ -86,15 +86,18 @@ describe('web e2e: fresh round trip through the real assembly', () => {
       remoteSocket = route
       const server = route.connectToServer()
       const listStreams = new Set<string>()
+      // Uplink frames carry the `open`; a set handler owns this direction.
+      route.onMessage((message) => {
+        const frame = JSON.parse(String(message)) as { type: string; streamId: string; endpoint?: string }
+        if (frame.type === 'open' && frame.endpoint === 'session/list') listStreams.add(frame.streamId)
+        server.send(message)
+      })
+      // Downlink frames carry the pages; this handler owns that direction.
       server.onMessage((message) => {
         const frame = JSON.parse(String(message)) as {
           type: string
           streamId: string
-          endpoint?: string
           value?: unknown
-        }
-        if (frame.type === 'open' && frame.endpoint === 'session/list') {
-          listStreams.add(frame.streamId)
         }
         const mark = markListTarget
         if (mark !== undefined && frame.type === 'item' && listStreams.has(frame.streamId)) {

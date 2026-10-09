@@ -57,9 +57,20 @@ describe.skipIf(webSnapshotMode() === 'record')('historical preset restoration t
       const corruptHeaderSource = Buffer.from('invalid Zstandard header frame')
       await mkdir(dirname(corruptHeaderPath), { recursive: true })
       await writeFile(corruptHeaderPath, corruptHeaderSource)
-      const listed: SessionSummary[] = []
-      for await (const page of scaffold.ctx.sessionController.list(new AbortController().signal)) {
-        listed.push(...page.items)
+      // The fixtures above are direct writes into the persistence root: the
+      // booted host's snapshot sees them at the next `listRefreshMs` TTL
+      // refresh (scaffold-shorted for e2e), not at write durability.
+      const wanted = [id, childId, brokenId]
+      let listed: SessionSummary[] = []
+      const deadline = Date.now() + 20_000
+      for (;;) {
+        listed = []
+        for await (const page of scaffold.ctx.sessionController.list(new AbortController().signal)) {
+          listed.push(...page.items)
+        }
+        if (wanted.every(wantedId => listed.some(item => item.sessionId === wantedId))) break
+        if (Date.now() > deadline) break
+        await new Promise(resolveTimer => setTimeout(resolveTimer, 150))
       }
       expect(listed.map(item => item.sessionId)).toEqual(expect.arrayContaining([id, childId, brokenId]))
       expect(listed.map(item => item.sessionId)).not.toContain(corruptHeaderId)
