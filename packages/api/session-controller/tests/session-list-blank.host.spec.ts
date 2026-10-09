@@ -17,7 +17,7 @@ import { CommandId } from '@deepseek-ai/dsh-commands/brand'
 // Side-effect type imports: the configuration-event SessionEventMap merges.
 import type {} from '@deepseek-ai/dsh-permission-presets'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
-import { createSessionTestRemote, type TestSessionRemote } from './test-remote.ts'
+import { collectSessionList, createSessionTestRemote, type TestSessionRemote } from './test-remote.ts'
 
 async function harness(): Promise<{ ctx: Context; remote: TestSessionRemote; attach: (session: Session) => Promise<void> }> {
   const ctx = new Context()
@@ -48,9 +48,8 @@ function appendStandalone(session: Session): void {
 }
 
 async function listBlank(remote: TestSessionRemote, id: string): Promise<boolean | undefined> {
-  const result = await remote.list({})
-  if (!result.ok) throw new Error('list failed')
-  return result.value.items.find(item => item.sessionId === id)?.blank
+  const items = await collectSessionList(remote.list())
+  return items.find(item => item.sessionId === id)?.blank
 }
 
 describe('summary blank = conversation not started', () => {

@@ -25,6 +25,7 @@ import {
   type SessionHandle, SessionAccess,
 } from '@deepseek-ai/dsh-session-persistence'
 import {
+  collectSessionList,
   createSessionTestRemote,
   testSessionPersistence,
 } from './test-remote.ts'
@@ -106,10 +107,9 @@ describe('sessions.list cold merge', () => {
     })
     const observe = vi.spyOn(ctx.sessionQuery, 'observeSession')
 
-    const response = await remote.list(request({}))
+    const response = await collectSessionList(remote.list())
 
-    if (!response.ok) throw new Error('list failed')
-    expect(response.value.items).toEqual([
+    expect(response).toEqual([
       expect.objectContaining({
         sessionId: sid('uncached'),
         blank: false,
@@ -164,10 +164,8 @@ describe('sessions.list cold merge', () => {
     } as never)
     const remote = createSessionTestRemote(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
 
-    const response = await remote.list(request({}))
-    expect(response.ok).toBe(true)
-    if (!response.ok) throw new Error('unreachable')
-    const byId = Object.fromEntries(response.value.items.map(item => [item.sessionId, item]))
+    const response = await collectSessionList(remote.list())
+    const byId = Object.fromEntries(response.map(item => [item.sessionId, item]))
     expect(byId['cached-blank']).toMatchObject({ blank: true, updatedAt: 100, running: false })
     expect(byId['cached-conversation']).toMatchObject({ blank: false, updatedAt: 1000 })
     // A cache miss leaves blankness unknown; the row stays visible without a body read.
@@ -222,25 +220,22 @@ describe('attached updatedAt tracks human prompts', () => {
     expect(boundary?.type).toBe('session/end-seed')
     expect(boundary?.time).toBeGreaterThan(worked)
 
-    const listed = await remote.list(request({}))
-    if (!listed.ok) throw new Error('list failed')
-    const summary = listed.value.items.find(item => item.sessionId === 'resumed-untouched')
+    const listed = await collectSessionList(remote.list())
+    const summary = listed.find(item => item.sessionId === 'resumed-untouched')
     expect(summary?.updatedAt).toBe(500)
 
     // A lifecycle boundary is not a human update.
     resumed.append('turn/start', { turn: 2 })
-    const afterBoundary = await remote.list(request({}))
-    if (!afterBoundary.ok) throw new Error('list failed')
-    expect(afterBoundary.value.items.find(item => item.sessionId === 'resumed-untouched')?.updatedAt)
+    const afterBoundary = await collectSessionList(remote.list())
+    expect(afterBoundary.find(item => item.sessionId === 'resumed-untouched')?.updatedAt)
       .toBe(worked)
 
     const prompt = resumed.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'new prompt' }],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const after = await remote.list(request({}))
-    if (!after.ok) throw new Error('list failed')
-    const moved = after.value.items.find(item => item.sessionId === 'resumed-untouched')
+    const after = await collectSessionList(remote.list())
+    const moved = after.find(item => item.sessionId === 'resumed-untouched')
     expect(moved?.updatedAt).toBe(prompt.time)
   })
 })
@@ -760,9 +755,8 @@ describe('degenerate composition (no persistence, no factory)', () => {
     await ctx.plugin(AgentRegistry)
     const remote = createSessionTestRemote(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
 
-    const listed = await remote.list(request({}))
-    expect(listed.ok).toBe(true)
-    if (listed.ok) expect(listed.value.items).toEqual([])
+    const listed = await collectSessionList(remote.list())
+    expect(listed).toEqual([])
 
     // No persistence means cold history cannot inspect a transcript.
     const response = await remote.page({

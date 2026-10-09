@@ -30,7 +30,7 @@ describe('bundle dependency closures', () => {
     expect(client.ctx.get('fileUpload')).toBeDefined()
     await vi.waitFor(() => {
       expect(client.ctx.sessions.list.getSnapshot().phase).toBe('ready')
-      expect(mock.log.calls('session/list')).toHaveLength(1)
+      expect(mock.log.streams('session/list')).toHaveLength(1)
       expect(mock.log.streams('session/control')).toHaveLength(1)
     })
   }, 60_000)

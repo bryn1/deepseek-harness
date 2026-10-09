@@ -797,8 +797,9 @@ describe('session.search', () => {
     const ctx = await baseContext()
     const controller = new AbortController()
     const cold = Array.from({ length: 32 }, (_, index) => header(`cold-${index}`, `/cold-${index}`))
-    const list = vi.fn((signal?: AbortSignal) => {
-      expect(signal).toBe(controller.signal)
+    const list = vi.fn(() => {
+      // The shared snapshot builds persistence reads on its own signal; the
+      // caller's cancellation is checked when the listing wait returns.
       controller.abort()
       return Promise.resolve(cold)
     })
@@ -817,7 +818,6 @@ describe('session.search', () => {
       request('cancel-during-visibility'),
       controller.signal,
     )
-
     expect(response).toMatchObject({
       ok: false,
       error: { code: 'gateway/cancelled' },

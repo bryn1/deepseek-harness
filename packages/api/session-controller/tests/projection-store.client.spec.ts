@@ -19,6 +19,7 @@ import { ProjectionValueStore } from '../src/client/sessions/projection-store.ts
 import { SessionManager } from '../src/client/sessions/manager.ts'
 import type { SessionRemotes } from '../src/client/sessions/remotes.ts'
 import { entries, plainTurn } from './event-script.client.ts'
+import { listStream } from './list-stream.client.ts'
 import { sessionBench } from './remote/bench.client.ts'
 import { FOLLOW, followScript, sessionWorld } from './remote/session.client.ts'
 
@@ -241,9 +242,7 @@ describe('manager frame routing', () => {
 
   it('preserves a newer title when the control baseline omits it', async ({ mock, remote }) => {
     const manager = makeManager(mock, remote)
-    remote.session.list.mockResolvedValue(ok({
-      items: [{ agentAvailable: true, sessionId: sid('s1'), updatedAt: 1, running: false, blank: false }],
-    }))
+    remote.session.list.mockImplementation(() => listStream([{ agentAvailable: true, sessionId: sid('s1'), updatedAt: 1, running: false, blank: false }]))
     await manager.refreshList()
     manager.handleControlFrame({
       type: 'projection', sessionId: sid('s1'), key: 'title', value: 'Projected title', seq: 4,
@@ -262,14 +261,12 @@ describe('manager frame routing', () => {
 
   it('routes a cached list block below every sequenced write: a Session baseline at any cut replaces it and a list refresh cannot restore it', async ({ mock, remote }) => {
     const manager = makeManager(mock, remote)
-    remote.session.list.mockResolvedValue(ok({
-      items: [{ agentAvailable: false,
-        sessionId: sid('s1'), updatedAt: 1, running: false, blank: false,
-        // A cold row viewed from a stale record whose own watermark outruns
-        // the connected Session's cut.
-        projections: { kind: 'cached', asOfSeq: 40, values: { title: 'Cached title', 'test/marks': { marks: ['cached'] } } },
-      }],
-    }))
+    remote.session.list.mockImplementation(() => listStream([{ agentAvailable: false,
+      sessionId: sid('s1'), updatedAt: 1, running: false, blank: false,
+      // A cold row viewed from a stale record whose own watermark outruns
+      // the connected Session's cut.
+      projections: { kind: 'cached', asOfSeq: 40, values: { title: 'Cached title', 'test/marks': { marks: ['cached'] } } },
+    }]))
     await manager.refreshList()
     expect(manager.getListSnapshot().items[0]?.title).toBe('Cached title')
 
@@ -294,13 +291,11 @@ describe('manager frame routing', () => {
 
   it('merges a sequenced list block under higher-seq-wins: a lower-cut baseline neither overwrites nor clears it', async ({ mock, remote }) => {
     const manager = makeManager(mock, remote)
-    remote.session.list.mockResolvedValue(ok({
-      items: [{ agentAvailable: true,
-        sessionId: sid('s1'), updatedAt: 1, running: false, blank: false,
-        // The Host's live registry served the block: its watermark shares the connection's seq space.
-        projections: { kind: 'sequenced', asOfSeq: 40, values: { title: 'Live title', 'test/marks': { marks: ['live'] } } },
-      }],
-    }))
+    remote.session.list.mockImplementation(() => listStream([{ agentAvailable: true,
+      sessionId: sid('s1'), updatedAt: 1, running: false, blank: false,
+      // The Host's live registry served the block: its watermark shares the connection's seq space.
+      projections: { kind: 'sequenced', asOfSeq: 40, values: { title: 'Live title', 'test/marks': { marks: ['live'] } } },
+    }]))
     await manager.refreshList()
     expect(manager.getListSnapshot().items[0]?.title).toBe('Live title')
 
@@ -326,16 +321,14 @@ describe('manager frame routing', () => {
 
   it('projects every retained value into list rows with stable snapshot identity', async ({ mock, remote }) => {
     const manager = makeManager(mock, remote)
-    remote.session.list.mockResolvedValue(ok({
-      items: [{ agentAvailable: true,
-        sessionId: sid('s1'), updatedAt: 1, running: false, blank: false,
-        projections: {
-          kind: 'sequenced',
-          asOfSeq: 2,
-          values: { 'test/marks': { marks: ['baseline'] } },
-        },
-      }],
-    }))
+    remote.session.list.mockImplementation(() => listStream([{ agentAvailable: true,
+      sessionId: sid('s1'), updatedAt: 1, running: false, blank: false,
+      projections: {
+        kind: 'sequenced',
+        asOfSeq: 2,
+        values: { 'test/marks': { marks: ['baseline'] } },
+      },
+    }]))
     await manager.refreshList()
     const baseline = manager.getListSnapshot().items[0]?.projectionValues
     expect(baseline).toEqual({ 'test/marks': { marks: ['baseline'] } })
@@ -353,9 +346,7 @@ describe('manager frame routing', () => {
 
   it.for([undefined, []])('drops the removed ordinary Session store with catalog %s', async (catalog, { mock, remote }) => {
     const manager = makeManager(mock, remote)
-    remote.session.list.mockResolvedValue(ok({
-      items: [{ agentAvailable: true, sessionId: sid('s1'), updatedAt: 1, running: false, blank: false }],
-    }))
+    remote.session.list.mockImplementation(() => listStream([{ agentAvailable: true, sessionId: sid('s1'), updatedAt: 1, running: false, blank: false }]))
     await manager.refreshList()
     manager.handleControlFrame({
       type: 'projection', sessionId: sid('s1'), key: 'title', value: 'Doomed', seq: 4,

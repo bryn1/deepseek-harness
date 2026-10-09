@@ -6,13 +6,11 @@
  * `RemoteMock`.
  * @module @deepseek-ai/dsh-client-test-runtime/src/assembly/remote-default-responses
  */
-import { ok, openStream, type RemoteTable } from '@deepseek-ai/dsh-remote-mock'
+import { frames, ok, openStream, type RemoteTable } from '@deepseek-ai/dsh-remote-mock'
 
 /** Default responses of the boot-time Remote endpoints; a spec loads it first and layers its own table on top. */
 export const remoteDefaultResponses: RemoteTable = {
   unary: {
-    // api-session-controller `sessions.handleConnected()` on `connection/reset`.
-    'session/list': ok({ items: [] }),
     // ui-workspace startup with no entries; first-use initialization is ineligible.
     'workspace/initializeDefault': ok(undefined),
     // ui-settings `mirror.ensure()` at apply and again on `connection/reset`.
@@ -44,6 +42,9 @@ export const remoteDefaultResponses: RemoteTable = {
     'session/follow',
   ],
   stream: {
+    // api-session-controller `sessions.handleConnected()` on `connection/reset`: the streamed
+    // catalog's only frame for an empty Host, ending the stream.
+    'session/list': frames([{ items: [], done: true }]),
     // api-session-controller client `apply`: the control stream's opening baseline, then open.
     'session/control': openStream([{ type: 'baseline', value: { projections: {} } }]),
     // ui-settings-account shares the account snapshot across settings and the sidebar menu.

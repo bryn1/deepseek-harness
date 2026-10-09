@@ -15,6 +15,7 @@ import type {
   SessionAssistantStreamBaseline, SessionFollowFrame, SessionFollowRequest,
 } from '../src/types.ts'
 import { FOLLOW, err, followScript, sessionWorld } from './remote/session.client.ts'
+import { listStream } from './list-stream.client.ts'
 
 const sid = (s: string): SessionId => s as SessionId
 /** ClientSessions uses the Gateway client for stream supervision and the native Remote mocks for responses. */
@@ -63,17 +64,15 @@ type FeedRow = {
 }
 
 async function feedList(b: Bench, rows: FeedRow[]): Promise<void> {
-  b.mock.remote.session.list.mockResolvedValue(ok({
-    items: rows.map(r => ({ agentAvailable: true,
-      sessionId: sid(r.id), updatedAt: 1, running: r.running ?? false, blank: r.blank ?? false,
-      ...(r.cwd !== undefined ? { cwd: r.cwd } : {}),
-      ...(r.parentId !== undefined ? { parentSessionId: sid(r.parentId) } : {}),
-      ...(r.origin !== undefined ? { origin: r.origin } : {}),
-      ...(r.projections === undefined
-        ? {}
-        : { projections: { kind: 'sequenced' as const, asOfSeq: 0, values: r.projections } }),
-    })),
-  }))
+  b.mock.remote.session.list.mockImplementation(() => listStream(rows.map(r => ({ agentAvailable: true,
+    sessionId: sid(r.id), updatedAt: 1, running: r.running ?? false, blank: r.blank ?? false,
+    ...(r.cwd !== undefined ? { cwd: r.cwd } : {}),
+    ...(r.parentId !== undefined ? { parentSessionId: sid(r.parentId) } : {}),
+    ...(r.origin !== undefined ? { origin: r.origin } : {}),
+    ...(r.projections === undefined
+      ? {}
+      : { projections: { kind: 'sequenced' as const, asOfSeq: 0, values: r.projections } }),
+  }))))
   await b.svc.refresh()
   await Promise.resolve() // manager notifier flush
 }

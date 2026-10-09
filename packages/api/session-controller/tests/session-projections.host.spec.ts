@@ -31,7 +31,9 @@ import {
   mountAgentLoopTestDependencies,
   mountAgentLoopTestHarness,
 } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createSessionTestRemote, testSessionPersistence, type TestSessionRemote } from './test-remote.ts'
+import {
+  collectSessionList, createSessionTestRemote, testSessionPersistence, type TestSessionRemote,
+} from './test-remote.ts'
 
 const ownedContexts = new Set<Context>()
 afterEach(async () => {
@@ -430,9 +432,8 @@ describe('session.history projections block', () => {
 
     const history = await opening(proxy, session.id)
     expect('test/internal-count' in history.projections.values).toBe(false)
-    const listing = await proxy.list(request({}))
-    if (!listing.ok) throw new Error('listing failed')
-    const row = listing.value.items.find(item => item.sessionId === session.id)
+    const listing = await collectSessionList(proxy.list())
+    const row = listing.find(item => item.sessionId === session.id)
     expect('test/internal-count' in (row?.projections?.values ?? {})).toBe(false)
   })
 
@@ -480,9 +481,8 @@ describe('session.list projections column', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     session.append('turn/start', { turn: 1 })
     seedMessages(session, 1)
-    const response = await gateway.list(request({}))
-    if (!response.ok) throw new Error('unreachable')
-    const row = response.value.items.find(item => item.sessionId === session.id)
+    const response = await collectSessionList(gateway.list())
+    const row = response.find(item => item.sessionId === session.id)
     expect(row?.projections?.values['test/last-user']).toEqual({ text: 'm0' })
     expect(row?.projections?.values.sessionListMetadata).toEqual({
       blank: false,
@@ -501,9 +501,8 @@ describe('session.list projections column', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     session.append('agent-preset/selected', { agentPreset: 'minimal' })
 
-    const response = await gateway.list(request({}))
-    if (!response.ok) throw new Error('unreachable')
-    const row = response.value.items.find(item => item.sessionId === session.id)
+    const response = await collectSessionList(gateway.list())
+    const row = response.find(item => item.sessionId === session.id)
     expect(row?.projections?.values.agentPreset).toBe('minimal')
   })
 
@@ -514,9 +513,8 @@ describe('session.list projections column', () => {
     const apply = vi.fn(unit.apply)
     ctx.sessionProjections.register({ ...unit, apply })
 
-    const response = await remote(ctx).list(request({}))
-    if (!response.ok) throw new Error('unreachable')
-    const row = response.value.items.find(item => item.sessionId === session.id)
+    const response = await collectSessionList(remote(ctx).list())
+    const row = response.find(item => item.sessionId === session.id)
     expect(row).toBeDefined()
     expect('test/last-user' in (row?.projections?.values ?? {})).toBe(false)
     expect(apply).not.toHaveBeenCalled()
@@ -525,9 +523,8 @@ describe('session.list projections column', () => {
   it('omits the column entirely when no registry is mounted', async () => {
     const { ctx, session } = await harness(false)
     seedMessages(session, 1)
-    const response = await remote(ctx).list(request({}))
-    if (!response.ok) throw new Error('unreachable')
-    const row = response.value.items.find(item => item.sessionId === session.id)
+    const response = await collectSessionList(remote(ctx).list())
+    const row = response.find(item => item.sessionId === session.id)
     expect(row).toBeDefined()
     expect(row !== undefined && 'projections' in row).toBe(false)
   })
@@ -555,9 +552,8 @@ describe('session.list projections column', () => {
           }
           : undefined),
     } as never)
-    const response = await remote(ctx).list(request({}))
-    if (!response.ok) throw new Error('unreachable')
-    const row = response.value.items.find(item => item.sessionId === coldId)
+    const response = await collectSessionList(remote(ctx).list())
+    const row = response.find(item => item.sessionId === coldId)
     expect(row?.running).toBe(false)
     expect(row?.projections).toEqual({
       kind: 'cached',
@@ -611,9 +607,8 @@ describe('session.list projections column', () => {
         list: async () => [{ header, revision: 'test:cold-host-state:1' }],
       } as never)
 
-      const response = await gateway.list(request({}))
-      if (!response.ok) throw new Error('unreachable')
-      const row = response.value.items.find(item => item.sessionId === id)
+      const response = await collectSessionList(gateway.list())
+      const row = response.find(item => item.sessionId === id)
       expect(row?.projections?.values.sessionListMetadata).toMatchObject({ blank: false })
       expect('test/private-prompt' in (row?.projections?.values ?? {})).toBe(false)
       expect(JSON.stringify(row)).not.toContain(secret)
@@ -688,9 +683,8 @@ describe('session.list projections column', () => {
         open: load,
       }) as never)
 
-      const response = await gateway.list(request({}))
-      if (!response.ok) throw new Error('unreachable')
-      const row = response.value.items.find(item => item.sessionId === id)
+      const response = await collectSessionList(gateway.list())
+      const row = response.find(item => item.sessionId === id)
       // Cold recency is the later of the header's creation time and the cached
       // last prompt; the fork's creation time is wall-clock and may trail the
       // inherited prompt by a tick.
@@ -712,9 +706,8 @@ describe('session.list projections column', () => {
     ctx.provide('sessionPersistence', testSessionPersistence(ctx, {
       list: async () => [{ version: SESSION_FORMAT_VERSION, id: coldId, createdAt: 5, isSeeded: false, cwd: '/tmp' }],
     }) as never)
-    const response = await remote(ctx).list(request({}))
-    if (!response.ok) throw new Error('unreachable')
-    const row = response.value.items.find(item => item.sessionId === coldId)
+    const response = await collectSessionList(remote(ctx).list())
+    const row = response.find(item => item.sessionId === coldId)
     expect(row).toBeDefined()
     expect(row !== undefined && 'projections' in row).toBe(false)
   })
@@ -729,9 +722,8 @@ describe('session.list projections column', () => {
       },
     })
     seedMessages(session, 1)
-    const response = await remote(ctx).list(request({}))
-    if (!response.ok) throw new Error('unreachable')
-    const row = response.value.items.find(item => item.sessionId === session.id)
+    const response = await collectSessionList(remote(ctx).list())
+    const row = response.find(item => item.sessionId === session.id)
     expect(row).toBeDefined()
     expect(row !== undefined && 'projections' in row).toBe(false)
   })

@@ -6,6 +6,8 @@ import type { InboxState } from '@deepseek-ai/dsh-agent/types'
 import type { SessionControlFrame } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { SessionManager } from '../src/client/sessions/manager.ts'
+import { listStreamDeferred } from './list-stream.client.ts'
+import type { SessionListPage } from '../src/types.ts'
 import { ok } from '@deepseek-ai/dsh-remote-mock'
 import { createClientTest, type ClientTestFixtures, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import type { SessionRemotes } from '../src/client/sessions/remotes.ts'
@@ -57,16 +59,16 @@ describe('Inbox projection intake', () => {
   it.for(['included', 'omitted'] as const)(
     'keeps a newer list Inbox when a delayed control baseline has the key %s',
     async (key, { remote }) => {
-      const list = Promise.withResolvers<Awaited<ReturnType<typeof remote.session.list>>>()
-      remote.session.list.mockReturnValue(list.promise)
+      const list = Promise.withResolvers<readonly SessionListPage[]>()
+      remote.session.list.mockReturnValue(listStreamDeferred(list.promise))
       const manager = makeManager(remote)
       const empty = { 'next-turn': [], 'next-step': [] }
       const stale = { ...empty, 'next-turn': [message('removed', 'already removed')] }
-      const result = ok({ items: [{
+      const result: readonly SessionListPage[] = [{ items: [{
         sessionId: SID, updatedAt: 1, running: false, blank: false, agentAvailable: false,
         // The Session is attached: the Host's live registry served the block.
         projections: { kind: 'sequenced' as const, asOfSeq: 21, values: { inbox: empty } },
-      }] })
+      }], done: true }]
       let refreshed: Promise<void> | undefined
 
       try {
@@ -96,8 +98,8 @@ describe('Inbox projection intake', () => {
   it.for(['control-first', 'list-first'] as const)(
     'replaces cold Session Inbox values across Host generations (%s)',
     async (order, { remote }) => {
-      const list = Promise.withResolvers<Awaited<ReturnType<typeof remote.session.list>>>()
-      remote.session.list.mockReturnValue(list.promise)
+      const list = Promise.withResolvers<readonly SessionListPage[]>()
+      remote.session.list.mockReturnValue(listStreamDeferred(list.promise))
       const manager = makeManager(remote)
       const hiddenSessionId = 'cold-hidden-inbox' as SessionId
       const ghost = message('ghost', 'acceptance was not persisted')
@@ -108,12 +110,12 @@ describe('Inbox projection intake', () => {
       manager.handleControlFrame({ ...inboxFrame(empty), sessionId: hiddenSessionId, seq: 20 })
       const face = manager.get(SID).projections.faceOf('inbox')
       const baseline = { type: 'baseline', value: { projections: {} } } as const
-      const result = ok({ items: [
+      const result: readonly SessionListPage[] = [{ items: [
         { sessionId: SID, updatedAt: 1, running: false, blank: false, agentAvailable: false,
           projections: { kind: 'cached' as const, asOfSeq: 1, values: { inbox: empty } } },
         { sessionId: hiddenSessionId, updatedAt: 1, running: false, blank: false, agentAvailable: false,
           projections: { kind: 'cached' as const, asOfSeq: 1, values: { inbox: restored } } },
-      ] })
+      ], done: true }]
       let refreshed: Promise<void> | undefined
 
       try {

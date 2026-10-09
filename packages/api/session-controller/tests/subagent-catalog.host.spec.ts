@@ -8,6 +8,7 @@ import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  collectSessionList,
   createSessionTestController,
   installSessionReadTestServices,
   testSessionPersistence,
@@ -131,12 +132,12 @@ describe('SessionController subagent catalog', () => {
     const dispose = ctx.agents.register({ id: PARENT, session: parent, status: 'idle', ctx } as Agent)
     await dispose
     expect(summaries).toEqual([true])
-    const available = await controller.list({}, new AbortController().signal)
-    expect(available.items.find(item => item.sessionId === PARENT)?.agentAvailable).toBe(true)
+    const available = await collectSessionList(controller.list(new AbortController().signal))
+    expect(available.find(item => item.sessionId === PARENT)?.agentAvailable).toBe(true)
     await dispose()
     expect(summaries).toEqual([true, false])
-    const unavailable = await controller.list({}, new AbortController().signal)
-    expect(unavailable.items.find(item => item.sessionId === PARENT)?.agentAvailable).toBe(false)
+    const unavailable = await collectSessionList(controller.list(new AbortController().signal))
+    expect(unavailable.find(item => item.sessionId === PARENT)?.agentAvailable).toBe(false)
     const result = await controller.projections({ sessionId: PARENT }, new AbortController().signal)
     expect(result).toMatchObject({ asOfSeq: 0, values: { subagentCatalog: [{ id: CHILD, createdAt: 8, mode: 'one-shot' }] } })
   })

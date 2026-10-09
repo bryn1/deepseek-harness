@@ -45,8 +45,7 @@ import type {
   SessionForkValue,
   SessionFollowFrame,
   SessionFollowRequest,
-  SessionListRequest,
-  SessionListValue,
+  SessionListPage,
   SessionOpenWorkspacePathRequest,
   SessionOpenWorkspacePathValue,
   SessionWorkspacePathApplication,
@@ -60,6 +59,7 @@ import type {
   SessionSearchValue,
   SessionSelectModelRequest,
   SessionSelectModelValue,
+  SessionSummary,
   SessionProjectionsRequest,
   SessionUpdateQueueRequest,
   SessionUpdateQueueValue,
@@ -71,7 +71,7 @@ export interface TestSessionRemote {
     request: { readonly path: string }, signal?: AbortSignal,
   ): Promise<RemoteResult<readonly SessionWorkspacePathApplication[]>>
   canOpenWorkspacePath(): Promise<RemoteResult<boolean>>
-  list(request: SessionListRequest, signal?: AbortSignal): Promise<RemoteResult<SessionListValue>>
+  list(signal?: AbortSignal): AsyncIterable<SessionListPage>
   search(request: SessionSearchRequest, signal?: AbortSignal): Promise<RemoteResult<SessionSearchValue>>
   create(request: SessionCreateRequest): Promise<RemoteResult<SessionCreateValue>>
   selectModel(request: SessionSelectModelRequest): Promise<RemoteResult<SessionSelectModelValue>>
@@ -238,6 +238,16 @@ function installControllers(
   const found = installed.get(ctx)
   if (found !== undefined) return found
 
+  if (ctx.get('workspaceRegistry') === undefined) {
+    // The list stream pages registry-accounted rows onto the first frame;
+    // specs needing membership override this empty default.
+    ctx.provide('workspaceRegistry', {
+      get: () => undefined,
+      list: () => [],
+      get archivedSessionIds() { return [] },
+      get pinnedSessionIds() { return [] },
+    } as never)
+  }
   if (ctx.get('typert') === undefined) {
     const dispose = (): void => {}
     ctx.provide('typert', {
@@ -347,10 +357,7 @@ export function createSessionTestRemote(
       () => direct.workspacePathApplications(request, signal), signal,
     ),
     canOpenWorkspacePath: () => remoteResult(() => direct.canOpenWorkspacePath()),
-    list: (request, signal = new AbortController().signal) => remoteResult(
-      () => direct.list(request, signal),
-      signal,
-    ),
+    list: (signal = new AbortController().signal) => direct.list(signal),
     search: (request, signal = new AbortController().signal) => remoteResult(
       () => direct.search(request, signal),
       signal,
@@ -382,4 +389,29 @@ export function createSessionTestRemote(
     follow: (request, signal = new AbortController().signal) => direct.follow(request, signal),
     control: (signal = new AbortController().signal) => direct.control(signal),
   }
+}
+
+/**
+ * Drain a `session.list` stream and require its completion frame.
+ * @param pages - the streamed page frames.
+ * @returns the frames in arrival order.
+ * @throws Error when the stream ended without a `done` frame.
+ */
+export async function collectSessionListPages(
+  pages: AsyncIterable<SessionListPage>,
+): Promise<SessionListPage[]> {
+  const frames: SessionListPage[] = []
+  for await (const page of pages) frames.push(page)
+  const last = frames.at(-1)
+  if (last === undefined || !last.done) {
+    throw new Error('session.list stream ended without its completion frame')
+  }
+  return frames
+}
+
+/** Drain a `session.list` stream into its ordered row sequence. */
+export async function collectSessionList(
+  pages: AsyncIterable<SessionListPage>,
+): Promise<SessionSummary[]> {
+  return (await collectSessionListPages(pages)).flatMap(page => [...page.items])
 }
