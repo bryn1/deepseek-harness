@@ -49,6 +49,13 @@ export default defineConfig([
   },
   {
     ...shared,
+    entry: { 'session-list.worker': 'session-list/session-list.worker.ts' },
+    outDir: '.dsh-build/session-list',
+    clean: true,
+    tsconfig: 'tsconfig.host.json',
+  },
+  {
+    ...shared,
     entry: {
       'conversation-fold.worker': 'conversation-fold/conversation-fold.worker.client.ts',
     },
