@@ -14,6 +14,7 @@ import SessionQueryEngine, {
   type SessionSearchExecContext, type SessionSearchHit, type SessionSearchPage, type SessionSearchRequest,
 } from '@deepseek-ai/dsh-session-query'
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { ApiSessionList } from '../src/list.ts'
 import { collectSessionListPages, createSessionTestRemote, testSessionPersistence } from './test-remote.ts'
 import { SESSION_LIST_PAGE_SIZE, type SessionListPage } from '../src/types.ts'
@@ -32,13 +33,17 @@ function providePersistence(ctx: Context, persistence: Record<string, unknown>):
   ctx.provide('sessionPersistence', testSessionPersistence(ctx, persistence) as never)
 }
 
-/** A Workspace registry accounting for `sessionIds` through one fixed Workspace. */
-function provideRegistry(ctx: Context, sessionIds: readonly SessionId[]): void {
+/** A Workspace registry accounting for `sessionIds` (+ archived) through one fixed Workspace. */
+function provideRegistry(
+  ctx: Context,
+  sessionIds: readonly SessionId[],
+  archived: readonly SessionId[] = [],
+): void {
   ctx.provide('workspaceRegistry', {
     get: () => undefined,
     list: () => [{ workspaceId: 'w1', sessionIds, path: '/w1' }],
     get archivedSessionIds() {
-      return []
+      return archived
     },
     get pinnedSessionIds() {
       return []
@@ -101,6 +106,83 @@ describe('session.list stream', () => {
     const rows = [first.value, ...rest].flatMap(page => [...page.items])
     expect(rows.filter(row => row.sessionId === sid('registry-1'))).toHaveLength(1)
     expect(rows.map(row => row.sessionId)).toContain(sid('cold-1'))
+  })
+
+  it('pages a provisional catalog larger than the page size before the snapshot read', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const registryIds = Array.from(
+      { length: SESSION_LIST_PAGE_SIZE + 5 },
+      (_, index) => sid(`registry-${String(index)}`),
+    )
+    const gate = Promise.withResolvers<readonly SessionHeader[]>()
+    provideRegistry(ctx, registryIds, [sid('registry-archived')])
+    providePersistence(ctx, {
+      list: () => gate.promise,
+      stat: async (id: SessionId) => ({
+        header: header(id, 500),
+        revision: 'test:stat' as never,
+      }),
+    })
+    const remote = remoteFor(ctx)
+    const iterator = remote.list(new AbortController().signal)[Symbol.asyncIterator]()
+
+    const first = await iterator.next()
+    if (first.done === true) throw new Error('the stream closed inside its provisional pages')
+    expect(first.value).toMatchObject({ done: false })
+    expect(first.value.items).toHaveLength(SESSION_LIST_PAGE_SIZE)
+    const second = await iterator.next()
+    if (second.done === true) throw new Error('the stream closed before the provisional tail page')
+    expect(second.value).toMatchObject({ done: false })
+    const provisional = [...first.value.items, ...second.value.items].map(item => item.sessionId)
+    expect(provisional).toHaveLength(SESSION_LIST_PAGE_SIZE + 6)
+    expect(new Set(provisional).size).toBe(SESSION_LIST_PAGE_SIZE + 6)
+    expect(provisional).toContain(sid('registry-archived'))
+
+    gate.resolve([
+      ...registryIds.map(id => header(String(id), 500)),
+      header('registry-archived', 500),
+      header('cold-late', 400),
+    ])
+    const rest: SessionListPage[] = []
+    for await (const page of { [Symbol.asyncIterator]: () => iterator } as AsyncIterable<SessionListPage>) rest.push(page)
+    expect(rest.at(-1)?.done).toBe(true)
+    const snapshotIds = rest.flatMap(page => page.items.map(item => item.sessionId))
+    expect(snapshotIds).not.toContain(sid('registry-0'))
+    expect(snapshotIds).toContain(sid('cold-late'))
+  })
+
+  it('re-reads a snapshot-listed Session that went live after the provisional capture', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
+    const gate = Promise.withResolvers<readonly SessionHeader[]>()
+    providePersistence(ctx, { list: () => gate.promise })
+    ctx.provide('agents', { get: () => undefined, list: () => [] } as never)
+    const remote = remoteFor(ctx)
+    const iterator = remote.list(new AbortController().signal)[Symbol.asyncIterator]()
+
+    // Nothing is live or registered yet, so the generator is suspended inside
+    // the snapshot read; the Session opens and moves after that capture point.
+    const pending = iterator.next()
+    const live = ctx.sessions.create(sid('went-live'), { meta: header('went-live', 100) })
+    live.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'moved' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    gate.resolve([header('went-live', 100), header('cold-1', 50)])
+
+    const pages: SessionListPage[] = []
+    const first = await pending
+    pages.push(first.value as SessionListPage)
+    for await (const page of { [Symbol.asyncIterator]: () => iterator } as AsyncIterable<SessionListPage>) pages.push(page)
+    expect(pages.at(-1)?.done).toBe(true)
+    const rows = pages.flatMap(page => [...page.items])
+    expect(rows.map(row => row.sessionId)).toEqual([sid('went-live'), sid('cold-1')])
+    // The row carries the live Session's current activity, not the snapshot
+    // record's captured header time.
+    expect(rows[0]?.updatedAt).toBeGreaterThan(100)
+    expect(rows[1]?.updatedAt).toBe(50)
   })
 
   it('ends with the completion frame after pages bounded by the page size', async () => {

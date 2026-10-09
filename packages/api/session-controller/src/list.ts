@@ -1,4 +1,8 @@
-/** Cold-safe Session list and search projection. */
+/**
+ * Cold-safe Session list and search projection.
+ * reason: the streamed listing, row projection, and search share the same
+ * ordering, projection, and page helpers, so their rows stay identical.
+ */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
