@@ -10,6 +10,7 @@ import { generationLogPath } from '../../../packages/session/session-persistence
 import { scanZstdFrames } from '../../../packages/session/session-persistence-jsonl/src/zstd.ts'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
+import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/types'
 import { normalizeSessionSnapshots } from '@deepseek-ai/dsh-session-snapshot'
 import { launchWebScaffold, webSnapshotMode } from './scaffold.ts'
 
@@ -56,9 +57,12 @@ describe.skipIf(webSnapshotMode() === 'record')('historical preset restoration t
       const corruptHeaderSource = Buffer.from('invalid Zstandard header frame')
       await mkdir(dirname(corruptHeaderPath), { recursive: true })
       await writeFile(corruptHeaderPath, corruptHeaderSource)
-      const listed = await scaffold.ctx.sessionController.list({}, new AbortController().signal)
-      expect(listed.items.map(item => item.sessionId)).toEqual(expect.arrayContaining([id, childId, brokenId]))
-      expect(listed.items.map(item => item.sessionId)).not.toContain(corruptHeaderId)
+      const listed: SessionSummary[] = []
+      for await (const page of scaffold.ctx.sessionController.list(new AbortController().signal)) {
+        listed.push(...page.items)
+      }
+      expect(listed.map(item => item.sessionId)).toEqual(expect.arrayContaining([id, childId, brokenId]))
+      expect(listed.map(item => item.sessionId)).not.toContain(corruptHeaderId)
 
       const reader = await scaffold.ctx.sessionPersistence.open(id, 'read')
       try {

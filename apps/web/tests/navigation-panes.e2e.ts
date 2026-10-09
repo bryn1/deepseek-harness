@@ -9,8 +9,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import type { Browser, Page, Response } from 'playwright'
+import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
+import type { SessionListPage } from '@deepseek-ai/dsh-api-session-controller/types'
 import { strFromU8, unzipSync } from 'fflate'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFailed } from 'vitest'
 import { parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
@@ -39,19 +40,48 @@ const EXPORTED_LOG_FILE = `session.v${SESSION_FORMAT_VERSION}.jsonl`
 const PROMPT_TURN1 = 'NavScenario: first run bash to print exactly NAVIGATION_OK, then read nav-a.md and nav-b.md using two read calls in ONE assistant message, then reply with the single word FIRST_DONE and stop.'
 const PROMPT_TURN2 = 'Reply in markdown with: a level-2 heading "Navigation Summary", a bulleted list of exactly two items, and a fenced code block containing echo WATERFALL. Then stop.'
 
-async function baselineResponse(
+/**
+ * Arm the page's Remote mux and collect the boot `session/list` pages.
+ * The interceptor forwards every frame untouched; the returned promise settles
+ * when the completion frame passes through, which is the RPC-level signal
+ * that the sidebar baseline landed.
+ */
+function baselineResponse(
   page: Page,
-): Promise<Response> {
-  return page.waitForResponse(response => (
-    response.request().method() === 'POST'
-    && new URL(response.url()).pathname === '/api/session/list'
-  ), { timeout: 30_000 })
+): Promise<SessionListPage[]> {
+  return new Promise<SessionListPage[]>((resolve, reject) => {
+    const pages: SessionListPage[] = []
+    const timer = setTimeout(() => {
+      reject(new Error('the session/list stream did not complete within 30s'))
+    }, 30_000)
+    void page.routeWebSocket('**/api/remote.mux', (route) => {
+      const server = route.connectToServer()
+      const listStreams = new Set<string>()
+      server.onMessage((message) => {
+        const frame = JSON.parse(String(message)) as {
+          type: string
+          streamId: string
+          endpoint?: string
+          value?: SessionListPage
+        }
+        if (frame.type === 'open' && frame.endpoint === 'session/list') {
+          listStreams.add(frame.streamId)
+        }
+        if (frame.type === 'item' && listStreams.has(frame.streamId) && frame.value !== undefined) {
+          pages.push(frame.value)
+          if (frame.value.done) {
+            clearTimeout(timer)
+            resolve([...pages])
+          }
+        }
+        route.send(message)
+      })
+    })
+  })
 }
 
-async function assertBaselineSucceeded(response: Response, method: string): Promise<void> {
-  expect(response.ok(), `${method} baseline HTTP response`).toBe(true)
-  const body = await response.json() as { result?: { ok?: unknown } }
-  expect(body.result?.ok, `${method} baseline RPC result`).toBe(true)
+function assertBaselineSucceeded(pages: readonly SessionListPage[], method: string): void {
+  expect(pages.at(-1)?.done, `${method} baseline completion frame`).toBe(true)
 }
 
 async function ensureSeedOpen(page: Page): Promise<void> {
@@ -118,11 +148,11 @@ describe('web e2e: navigation & panes over a rich seeded session', () => {
     // Arm before navigation so the Session response cannot be missed. The
     // Workspace stream settles through the user-visible Ungrouped barrier.
     const sessionBaseline = baselineResponse(page)
-    const [, sessionResponse] = await Promise.all([
+    const [, sessionPages] = await Promise.all([
       page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' }),
       sessionBaseline,
     ])
-    await assertBaselineSucceeded(sessionResponse, 'session.list')
+    assertBaselineSucceeded(sessionPages, 'session.list')
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
     // The frame mounts before the asynchronous session-list baseline lands.
     // Search must target the settled seeded row, not the startup input that
@@ -366,11 +396,11 @@ describe('web e2e: navigation & panes over a rich seeded session', () => {
       }
     })
     const observerSessionBaseline = baselineResponse(observer)
-    const [, observerSessionResponse] = await Promise.all([
+    const [, observerSessionPages] = await Promise.all([
       observer.goto(scaffold.authenticatedUrl, { waitUntil: 'load' }),
       observerSessionBaseline,
     ])
-    await assertBaselineSucceeded(observerSessionResponse, 'observer session.list')
+    assertBaselineSucceeded(observerSessionPages, 'observer session.list')
     await observer.getByText('Ungrouped', { exact: true }).waitFor({ timeout: 30_000 })
     await ensureSeedOpen(observer)
 

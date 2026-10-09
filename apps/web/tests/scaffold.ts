@@ -58,6 +58,8 @@ import {
   type NormalizeContext,
 } from '@deepseek-ai/dsh-session-snapshot'
 import type { Profile, ProfileContext } from '@deepseek-ai/dsh-app-boot'
+import type { SessionListPage } from '@deepseek-ai/dsh-api-session-controller/types'
+import { drainSessionListViaMux } from './mux-list.ts'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type {
@@ -292,6 +294,8 @@ export interface WebScaffold {
   harnessHome: string
   /** Send a browser-equivalent Host request with this scaffold's authenticated cookie. */
   hostFetch(path: string, init?: RequestInit): Promise<Response>
+  /** Drain the streamed `session/list` over the Remote mux with this scaffold's authenticated cookie. */
+  hostSessionList(): Promise<SessionListPage[]>
   /** Await a settled turn end: in-process turn/end, then the agent's idle flip (which follows the persistence flush). */
   whenTurnSettled(timeoutMs?: number): Promise<SessionId>
   /**
@@ -925,6 +929,9 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       const headers = new Headers(init.headers)
       headers.set('cookie', cookieHeader)
       return fetch(new URL(path, baseUrl), { ...init, headers })
+    },
+    hostSessionList(): Promise<SessionListPage[]> {
+      return drainSessionListViaMux(baseUrl, cookieHeader)
     },
     // Barrier stack: the in-process turn/end identifies the session, its
     // explicit flush makes the transcript durable, and the caller's browser

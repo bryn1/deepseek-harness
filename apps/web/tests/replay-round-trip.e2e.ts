@@ -15,13 +15,12 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Browser, Page, Route, WebSocketRoute } from 'playwright'
+import type { Browser, Page, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { ToolCallId, expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionListValue } from '@deepseek-ai/dsh-api-session-controller/types'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type { SessionListPage, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/types'
 import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria,
   compareOrRefreshGolden, fixtureUserPrompts,
@@ -48,7 +47,13 @@ const MODE = webSnapshotMode()
 // drift apart.
 const PROMPT = 'Use the bash tool to run exactly: echo WEB_E2E_OK. Then reply with the single word DONE and stop.'
 
-type SessionListResponse = { result: RemoteResult<SessionListValue> }
+/** While set, the mux interceptor stamps this timestamp onto the session's streamed list rows. */
+type ListMark = {
+  readonly sessionId: SessionId
+  readonly updatedAt: number
+  /** Fires with the first marked page so the test can await the reconnect refresh. */
+  readonly resolve: (page: SessionListPage) => void
+}
 
 /** Rendered text of the system prompt surface node, or undefined when the surface carries none. */
 function systemPromptText(session: Session): string | undefined {
@@ -63,6 +68,8 @@ describe('web e2e: fresh round trip through the real assembly', () => {
   let tripwire: ReturnType<typeof watchConsole>
   let settledSessionId: SessionId | undefined
   let remoteSocket: WebSocketRoute | undefined
+  let markListTarget: ListMark | undefined
+  let hostListRow: SessionSummary | undefined
   const sessionEvents: SessionEvent[] = []
   const browserNow = Date.now()
 
@@ -77,7 +84,34 @@ describe('web e2e: fresh round trip through the real assembly', () => {
     await page.clock.setFixedTime(browserNow)
     await page.routeWebSocket('**/api/remote.mux', (route) => {
       remoteSocket = route
-      route.connectToServer()
+      const server = route.connectToServer()
+      const listStreams = new Set<string>()
+      server.onMessage((message) => {
+        const frame = JSON.parse(String(message)) as {
+          type: string
+          streamId: string
+          endpoint?: string
+          value?: unknown
+        }
+        if (frame.type === 'open' && frame.endpoint === 'session/list') {
+          listStreams.add(frame.streamId)
+        }
+        const mark = markListTarget
+        if (mark !== undefined && frame.type === 'item' && listStreams.has(frame.streamId)) {
+          const page = frame.value as SessionListPage
+          hostListRow = page.items.find(item => item.sessionId === mark.sessionId) ?? hostListRow
+          const markedPage: SessionListPage = {
+            ...page,
+            items: page.items.map(item => item.sessionId === mark.sessionId
+              ? { ...item, updatedAt: mark.updatedAt }
+              : item),
+          }
+          mark.resolve(markedPage)
+          route.send(JSON.stringify({ ...frame, value: markedPage }))
+          return
+        }
+        route.send(message)
+      })
     })
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
@@ -152,37 +186,21 @@ describe('web e2e: fresh round trip through the real assembly', () => {
       const disconnected = remoteSocket
       if (disconnected === undefined) throw new Error('the Web Remote socket never connected')
       const warningStart = tripwire.warnings.length
-      // Only this list response carries the 2d timestamp. Its rendered label
-      // confirms the refresh reached the row, without altering blank/running.
-      const listUrl = new URL('/api/session/list', scaffold.baseUrl).href
-      const markListResponse = async (route: Route): Promise<void> => {
-        const response = await route.fetch()
-        try {
-          const body = await response.json() as SessionListResponse
-          if (body.result.ok) {
-            body.result = { ...body.result, value: {
-              ...body.result.value,
-              items: body.result.value.items.map(item => item.sessionId === sessionId
-                ? { ...item, updatedAt: browserNow - 2 * 86_400_000 }
-                : item),
-            } }
-          }
-          await route.fulfill({ response, json: body })
-        } finally {
-          await response.dispose()
-        }
-      }
-      await page.route(listUrl, markListResponse, { times: 1 })
+      // Only the reconnect's list pages carry the 2d timestamp: the mux
+      // interceptor rewrites the streamed rows for this session, and the
+      // rendered label confirms the refresh reached the row, without
+      // altering blank/running.
+      const marked = new Promise<SessionListPage>((resolve) => {
+        markListTarget = { sessionId, updatedAt: browserNow - 2 * 86_400_000, resolve }
+      })
       try {
-        const refreshing = page.waitForResponse(listUrl)
-        const [, refreshed] = await Promise.all([disconnected.close(), refreshing])
+        await Promise.all([disconnected.close(), marked])
         // Cross-network reconnect: allow more than expect.poll's default.
         await expect.poll(() => remoteSocket !== disconnected, { timeout: 15_000 }).toBe(true)
-        const baseline = await refreshed.json() as SessionListResponse
-        expect(baseline.result.ok).toBe(true)
-        if (!baseline.result.ok) throw new Error('the reconnect list request failed')
-        const hostSummary = baseline.result.value.items.find(item => item.sessionId === sessionId)
+        const hostSummary = hostListRow
         expect(hostSummary).toMatchObject({ blank: true, running: false })
+        expect((await marked).items.find(item => item.sessionId === sessionId)?.updatedAt)
+          .toBe(browserNow - 2 * 86_400_000)
         await row.getByText('2d', { exact: true }).waitFor()
         expect(await row.getAttribute('draggable')).toBe('true')
         expect(await row.getByText('New Session', { exact: true }).count()).toBe(0)
@@ -198,7 +216,7 @@ describe('web e2e: fresh round trip through the real assembly', () => {
         await compareOrRefreshGolden(ACCEPTED_RECONNECT_EXPECTED, checkpoint, MODE)
         acknowledgeReloadConnectionLoss(tripwire, warningStart)
       } finally {
-        await page.unroute(listUrl, markListResponse)
+        markListTarget = undefined
       }
     } finally {
       // No turn can settle before maintenance releases the accepted input.

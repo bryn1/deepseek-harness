@@ -13,14 +13,11 @@ it('advances turns and updates the Session summary after accepted prompts', asyn
     request: { sessionId: 'fx-1', requestId: 'request-2', mode: 'queue', content: [] },
   }])
 
-  const listed = await mock.dispatch('session/list', []) as {
-    readonly ok: true
-    readonly value: {
-      readonly items: readonly { readonly sessionId: string; readonly blank: boolean; readonly running: boolean }[]
-    }
+  const rows: { readonly sessionId: string; readonly blank: boolean; readonly running: boolean }[] = []
+  for await (const page of mock.open('session/list', [], new AbortController().signal)) {
+    rows.push(...(page as { readonly items: typeof rows }).items)
   }
-  expect(listed.ok).toBe(true)
-  expect(listed.value.items.find(item => item.sessionId === 'fx-1')).toMatchObject({
+  expect(rows.find(item => item.sessionId === 'fx-1')).toMatchObject({
     blank: false,
     running: true,
   })

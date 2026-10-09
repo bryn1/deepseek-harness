@@ -326,20 +326,19 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
       type Result<T> = { result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } } }
       interface PreviewTransport {
         fetch(input: string, init: RequestInit): Promise<Response>
+        openStream(endpoint: string, payload: unknown, signal: AbortSignal, uplink?: AsyncIterable<unknown>): AsyncIterable<unknown>
       }
       const transport = (globalThis as typeof globalThis & { __DSH_TRANSPORT__?: PreviewTransport }).__DSH_TRANSPORT__
       if (transport === undefined) throw new Error('preview transport is absent after boot')
-      const response = await transport.fetch('/api/session/list', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request', rpcId: 'preview-session-list', method: 'session/list',
-          payload: { args: { _request: {} } },
-        }),
-      })
-      const sessions = await response.json() as Result<{ items: Array<{ sessionId: string }> }>
-      if (!sessions.result.ok) throw new Error(`session/list failed: ${sessions.result.error.message}`)
-      const sessionId = sessions.result.value.items[0]?.sessionId
+      // The catalog arrives as a streamed baseline: drain it through the
+      // tunnel's stream carrier, exactly like the product client does.
+      const rows: Array<{ sessionId: string }> = []
+      for await (const frame of transport.openStream('session/list', { args: {} }, new AbortController().signal)) {
+        const page = frame as { items: Array<{ sessionId: string }>; done: boolean }
+        rows.push(...page.items)
+        if (page.done) break
+      }
+      const sessionId = rows[0]?.sessionId
       if (sessionId === undefined) throw new Error('workspace adoption created no Session')
 
       // Remote namespaces answer over the same unary carrier; the args object
@@ -502,22 +501,19 @@ async function bootEmptyPreview(origin: string, browser: Browser): Promise<void>
     await page.getByRole('textbox', { name: 'Choose workspace' }).waitFor({ timeout: HERO_TIMEOUT_MS })
     const sessionCount = await page.evaluate(async () => {
       const transport = (globalThis as typeof globalThis & {
-        __DSH_TRANSPORT__?: { fetch(input: string, init: RequestInit): Promise<Response> }
+        __DSH_TRANSPORT__?: {
+          fetch(input: string, init: RequestInit): Promise<Response>
+          openStream(endpoint: string, payload: unknown, signal: AbortSignal, uplink?: AsyncIterable<unknown>): AsyncIterable<unknown>
+        }
       }).__DSH_TRANSPORT__
       if (transport === undefined) throw new Error('empty preview transport is absent after boot')
-      const response = await transport.fetch('/api/session/list', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request', rpcId: 'empty-preview-session-list', method: 'session/list',
-          payload: { args: { _request: {} } },
-        }),
-      })
-      const body = await response.json() as {
-        result: { ok: true; value: { items: unknown[] } } | { ok: false; error: { message: string } }
+      let rows = 0
+      for await (const frame of transport.openStream('session/list', { args: {} }, new AbortController().signal)) {
+        const page = frame as { items: unknown[]; done: boolean }
+        rows += page.items.length
+        if (page.done) break
       }
-      if (!body.result.ok) throw new Error(`empty session/list failed: ${body.result.error.message}`)
-      return body.result.value.items.length
+      return rows
     })
     expect(sessionCount).toBe(0)
     expect(pageErrors.map(error => error.message)).toEqual([])

@@ -127,43 +127,28 @@ async function freePort(): Promise<number> {
   return port
 }
 
-/** Invoke one public Remote method over its HTTP carrier. */
-async function remoteRpc<T>(baseUrl: string, endpoint: string, args: object): Promise<T> {
-  const authenticated = await authenticatedWeb(baseUrl)
-  const response = await fetch(`${authenticated.origin}/api/${endpoint}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', cookie: authenticated.cookie },
-    body: JSON.stringify({
-      type: 'client-request',
-      rpcId: `github-webhook-real-${endpoint}-${randomUUID()}`,
-      method: endpoint,
-      payload: { args },
-    }),
-  })
-  if (!response.ok) {
-    throw new Error(`${endpoint} returned HTTP ${String(response.status)}: ${await response.text()}`)
-  }
-  const envelope = await response.json() as {
-    result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }
-  }
-  if (!envelope.result.ok) {
-    throw new Error(`${endpoint} failed: ${envelope.result.error.code}: ${envelope.result.error.message}`)
-  }
-  return envelope.result.value
-}
-
-/** Read one opening item from a public Remote stream. */
-async function openingStreamItem(
+/**
+ * Drain one public Remote stream over the mux carrier to a settled frame.
+ * @param baseUrl - origin of the running CLI Host.
+ * @param endpoint - Remote endpoint to open (channel `session` or similar).
+ * @param args - named open arguments.
+ * @param settleMs - deadline for the stream to settle itself.
+ * @param onItem - per-item observation; `'stop'` settles the drain at that item.
+ * @returns every streamed item up to the settling point, in arrival order.
+ */
+async function streamItemsOverMux(
   baseUrl: string,
   endpoint: string,
   args: object,
-  accepts: (value: unknown) => boolean,
-): Promise<Record<string, unknown>> {
+  settleMs: number,
+  onItem: (value: Record<string, unknown>) => 'continue' | 'stop',
+): Promise<Record<string, unknown>[]> {
   const authenticated = await authenticatedWeb(baseUrl)
   const socket = new WebSocket(`${authenticated.origin.replace(/^http/u, 'ws')}/api/remote.mux`, {
     headers: { cookie: authenticated.cookie },
   })
   const streamId = `github-webhook-real-${endpoint}-${randomUUID()}`
+  const items: Record<string, unknown>[] = []
   try {
     await new Promise<void>((resolve, reject) => {
       const cleanup = (): void => {
@@ -187,19 +172,18 @@ async function openingStreamItem(
       socket.addEventListener('error', failed)
       socket.addEventListener('close', closed)
     })
-    return await new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timer = setTimeout(() => { finish(new Error(`${endpoint} did not publish its opening item`)) }, 10_000)
+    return await new Promise<Record<string, unknown>[]>((resolve, reject) => {
+      const timer = setTimeout(() => { finish(new Error(`${endpoint} did not settle within ${String(settleMs)}ms`)) }, settleMs)
       const cleanup = (): void => {
         clearTimeout(timer)
         socket.removeEventListener('message', message)
         socket.removeEventListener('error', failed)
         socket.removeEventListener('close', closed)
       }
-      const finish = (error: Error | undefined, value?: Record<string, unknown>): void => {
+      const finish = (error: Error | undefined): void => {
         cleanup()
         if (error !== undefined) reject(error)
-        else if (value === undefined) reject(new Error(`${endpoint} opening item was absent`))
-        else resolve(value)
+        else resolve(items)
       }
       const message = (event: WebSocket.MessageEvent): void => {
         try {
@@ -214,18 +198,19 @@ async function openingStreamItem(
             return
           }
           if (frame.type === 'end') {
-            finish(new Error(`${endpoint} ended before its opening item`))
+            finish(undefined)
             return
           }
-          if (frame.type === 'item' && isRecord(frame.value) && accepts(frame.value)) {
-            finish(undefined, frame.value)
+          if (frame.type === 'item' && isRecord(frame.value)) {
+            items.push(frame.value)
+            if (onItem(frame.value) === 'stop') finish(undefined)
           }
         } catch (error) {
           finish(error instanceof Error ? error : new Error(String(error)))
         }
       }
-      const failed = (): void => { finish(new Error(`${endpoint} carrier failed before its opening item`)) }
-      const closed = (): void => { finish(new Error(`${endpoint} carrier closed before its opening item`)) }
+      const failed = (): void => { finish(new Error(`${endpoint} carrier failed mid-stream`)) }
+      const closed = (): void => { finish(new Error(`${endpoint} carrier closed mid-stream`)) }
       socket.addEventListener('message', message)
       socket.addEventListener('error', failed)
       socket.addEventListener('close', closed)
@@ -234,6 +219,34 @@ async function openingStreamItem(
   } finally {
     socket.close()
   }
+}
+
+/** Read one opening item from a public Remote stream. */
+async function openingStreamItem(
+  baseUrl: string,
+  endpoint: string,
+  args: object,
+  accepts: (value: unknown) => boolean,
+): Promise<Record<string, unknown>> {
+  const items = await streamItemsOverMux(baseUrl, endpoint, args, 10_000, value => (accepts(value) ? 'stop' : 'continue'))
+  const opening = items.at(-1)
+  if (opening === undefined || !accepts(opening)) throw new Error(`${endpoint} did not publish an acceptable opening item`)
+  return opening
+}
+
+/**
+ * Drain one public Remote stream over the mux carrier to its end frame.
+ * @param baseUrl - origin of the running CLI Host.
+ * @param endpoint - Remote endpoint to open (channel `session` or similar).
+ * @param args - named open arguments.
+ * @returns every streamed item in arrival order.
+ */
+async function drainStreamItems(
+  baseUrl: string,
+  endpoint: string,
+  args: object,
+): Promise<Record<string, unknown>[]> {
+  return await streamItemsOverMux(baseUrl, endpoint, args, 15_000, () => 'continue')
 }
 
 /** Read the current Workspace baseline from a fresh follow generation. */
@@ -402,7 +415,11 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('GitHub webhook through the real 
       const sessionId = workspace?.sessionIds[0]
       if (sessionId === undefined) throw new Error('workspace/follow did not expose the webhook Session')
 
-      const sessions = await remoteRpc<SessionList>(baseUrl, 'session/list', { _request: {} })
+      const listPages = await drainStreamItems(baseUrl, 'session/list', {})
+      expect(listPages.at(-1)?.['done']).toBe(true)
+      const sessions: SessionList = {
+        items: listPages.flatMap(page => (page['items'] ?? []) as SessionList['items']),
+      }
       expect(sessions.items.find(session => session.sessionId === sessionId)).toMatchObject({
         blank: false,
         cwd: canonicalWorkspacePath,

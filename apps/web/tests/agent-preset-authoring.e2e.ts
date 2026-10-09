@@ -66,22 +66,10 @@ describe('web e2e: preset roster guidance', () => {
     await settings.getByRole('button', { name: 'Agent 预设' }).click()
     await settings.getByRole('button', { name: '让 Agent 帮我创建预设模式', exact: true }).click()
     await settings.waitFor({ state: 'detached', timeout: 10_000 })
-    await expect.poll(async () => {
-      const response = await scaffold.hostFetch('/api/session/list', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request', rpcId: 'creator-draft-stage', method: 'session/list',
-          payload: { args: { _request: {} } },
-        }),
-      })
-      const body = await response.json() as {
-        result: { value?: { items: { projections?: { values: { agentPreset?: string | null } } }[] } }
-      }
-      return body.result.value?.items
-        .map(item => item.projections?.values.agentPreset)
-        .filter(preset => typeof preset === 'string') ?? []
-    }, { timeout: 15_000 }).toContain('cordis')
+    await expect.poll(async () => (await scaffold.hostSessionList())
+      .flatMap(page => [...page.items])
+      .map(item => item.projections?.values.agentPreset)
+      .filter(preset => typeof preset === 'string'), { timeout: 15_000 }).toContain('cordis')
   })
 
   it('runs without page errors or model calls', () => { expect(tripwire.pageErrors).toEqual([]) })

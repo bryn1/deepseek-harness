@@ -186,25 +186,8 @@ async function seedSubagent(scaffold: WebScaffold, parentId: SessionId): Promise
  * @returns the live session's preset, or undefined before it is listed.
  */
 async function livePreset(scaffold: WebScaffold): Promise<string | undefined> {
-  const response = await scaffold.hostFetch('/api/session/list', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      type: 'client-request', rpcId: 'agent-preset-live', method: 'session/list',
-      payload: { args: { _request: {} } },
-    }),
-  })
-  const body = await response.json() as {
-    result: {
-      value?: {
-        items: {
-          sessionId: string
-          projections?: { values: { agentPreset?: string | null } }
-        }[]
-      }
-    }
-  }
-  const preset = body.result.value?.items.find(item => item.sessionId !== SEED_ID)
+  const pages = await scaffold.hostSessionList()
+  const preset = pages.flatMap(page => [...page.items]).find(item => item.sessionId !== SEED_ID)
     ?.projections?.values.agentPreset
   return typeof preset === 'string' ? preset : undefined
 }

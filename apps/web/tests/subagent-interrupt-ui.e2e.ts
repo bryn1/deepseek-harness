@@ -25,6 +25,7 @@ import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, readPersistedEvents, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
+import { interceptMuxSessionList } from './mux-list.ts'
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
 
 const BASE_FIXTURE = fileURLToPath(new URL('../../../snapshots/web/live-interactions/session.v3.jsonl', import.meta.url))
@@ -186,23 +187,22 @@ describe.skipIf(MODE === 'record')('web e2e: composer interrupt for a running co
   it('interrupts the live child through the parent-offline composer', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-subagent-interrupt-offline'))
     // The parent is unavailable in the Session list while the child stays live.
-    const pattern = '**/api/session/list'
-    await page.route(pattern, async (route) => {
-      const response = await route.fetch()
-      const body = await response.json() as {
-        result: { ok: true; value: { items: { sessionId: SessionId; agentAvailable: boolean }[] } } | { ok: false }
+    let sawParent = false
+    interceptMuxSessionList(page, (listPage) => {
+      if (!listPage.items.some(item => item.sessionId === parent.id)) return undefined
+      sawParent = true
+      return {
+        ...listPage,
+        items: listPage.items.map(item => item.sessionId === parent.id
+          ? { ...item, agentAvailable: false }
+          : item),
       }
-      if (body.result.ok) {
-        const summary = body.result.value.items.find(session => session.sessionId === parent.id)
-        if (summary === undefined) throw new Error('parent missing from Session list')
-        summary.agentAvailable = false
-      }
-      await route.fulfill({ response, json: body })
     })
     try {
       const warningStart = tripwire.warnings.length
       await page.reload({ waitUntil: 'load' })
       await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      await expect.poll(() => sawParent, { timeout: 15_000 }).toBe(true)
       acknowledgeReloadConnectionLoss(tripwire, warningStart)
       await page.getByRole('button', { name: /1 subagent/ }).click()
       await page.getByRole('treeitem', { name: new RegExp(LABEL) }).click()

@@ -222,7 +222,12 @@ export function createAssembledRemote(options: AssembledRemoteOptions = {}): Ass
     mock.streams.push('$events', { type: 'cancel', eventId })
     return ok(undefined)
   })
-  mock.unary('session/list', () => ok({ items: structuredClone(sessions) }))
+  mock.stream('session/list', (_args, stream) => {
+    // The catalog streams its current rows on every open: creates, removals,
+    // and status pushes mutate the same array the browser re-pulls after.
+    stream.push({ items: structuredClone(sessions), done: true })
+    stream.end()
+  })
   mock.unary('session/projections', (request: unknown) => {
     const sessionId = recordString(recordValue(request, 'request'), 'sessionId')
     const summary = sessions.find(candidate => candidate.sessionId === sessionId)

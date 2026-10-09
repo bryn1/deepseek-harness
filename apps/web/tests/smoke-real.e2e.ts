@@ -27,6 +27,7 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import WebSocket from 'ws'
+import { drainSessionListViaMux } from './mux-list.ts'
 import { REPO_ROOT, connectFreshWorkspace, newEnglishPage, probeFreePort, requireDist, saveFailureShot } from './support.ts'
 
 const WEB_SURFACE_PROMPT = fileURLToPath(new URL('./expected/web-runtime-context/web-surface-prompt.expected.md', import.meta.url))
@@ -756,19 +757,17 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY || notReady.length > 0)('web smoke
       productTitle,
       { timeout: 15_000 },
     )
-    await expect.poll(async () => (await remoteRpc<{ items: { sessionId: string }[] }>(
-      baseUrl,
-      'session/list',
-      { _request: {} },
-    )).items.length, {
+    // The catalog now streams: drain it over the mux exactly like the browser
+    // carrier does, so the smoke proves the product stream path end to end.
+    const listedSessionIds = async (): Promise<string[]> => {
+      const authenticated = await authenticatedWeb(baseUrl)
+      const pages = await drainSessionListViaMux(authenticated.origin, authenticated.cookie)
+      return pages.flatMap(page => page.items.map(item => item.sessionId))
+    }
+    await expect.poll(async () => (await listedSessionIds()).length, {
       timeout: 15_000,
     }).toBe(1)
-    const sessions = await remoteRpc<{ items: { sessionId: string }[] }>(
-      baseUrl,
-      'session/list',
-      { _request: {} },
-    )
-    const sessionId = sessions.items[0]?.sessionId
+    const sessionId = (await listedSessionIds())[0]
     if (sessionId === undefined) throw new Error('created Web session was not listed')
     const durableTitle = await waitForProviderTitle(baseUrl, sessionId)
     await page.waitForFunction(

@@ -18,6 +18,7 @@ import {
   launchWebScaffold, readPersistedEvents, selectedSessionFixture, watchConsole,
   webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
+import { interceptMuxSessionList } from './mux-list.ts'
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot, writeComposerDraft } from './support.ts'
 
 const BASE_FIXTURE = fileURLToPath(new URL('../../../snapshots/web/live-interactions/session.v3.jsonl', import.meta.url))
@@ -447,15 +448,12 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
 
   it('waits for the initial catalog before restoring a saved child', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-subagent-restore'))
-    const pattern = '**/api/session/list'
     let requested = false
     let releaseCatalog = (): void => {}
     const catalogHeld = new Promise<void>((resolve) => { releaseCatalog = resolve })
-    await page.route(pattern, async (route) => {
-      const response = await route.fetch()
+    interceptMuxSessionList(page, (listPage) => {
       requested = true
-      await catalogHeld
-      await route.fulfill({ response })
+      return catalogHeld.then(() => listPage)
     })
 
     const warningStart = tripwire.warnings.length
