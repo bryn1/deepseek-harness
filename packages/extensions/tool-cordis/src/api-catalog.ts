@@ -1796,10 +1796,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the current attached state or persisted header and event prefix.',
       },
       {
-        signature: '@Remote(\'list\') async list(_request: SessionListRequest, signal: AbortSignal): Promise<SessionListValue>',
-        description: 'Read all visible Session rows without resuming an Agent.',
-        parameters: [{ name: '_request', description: 'reserved empty list request.' }, { name: 'signal', description: 'cancellation for persistence reads.' }],
-        returns: 'visible Session summaries ordered by activity.',
+        signature: '@Remote({ mode: \'stream\' }) list(signal: AbortSignal): AsyncIterable<SessionListPage>',
+        description: 'Stream every visible Session row as ordered pages without resuming an Agent.',
+        parameters: [{ name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
+        returns: 'page frames ordered by activity; the `done` frame completes the baseline once the persisted listing snapshot is ready.',
       },
       {
         signature: '@Remote(\'search\') search(request: SessionSearchRequest, signal: AbortSignal): Promise<SessionSearchValue>',
@@ -6270,12 +6270,8 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type SessionLineageTrace = {\n    target: SessionRecord;\n    ancestors: SessionRecord[];\n    descendants: SessionLineageNode[];\n} & ({\n    complete: true;\n    root: SessionRecord;\n} | {\n    complete: false;\n    unresolvedParentId: SessionId;\n});',
   },
   {
-    name: 'SessionListRequest',
-    declaration: 'export interface SessionListRequest {\n    readonly cursor?: string;\n}',
-  },
-  {
-    name: 'SessionListValue',
-    declaration: 'export interface SessionListValue {\n    readonly items: readonly SessionSummary[];\n}',
+    name: 'SessionListPage',
+    declaration: 'export interface SessionListPage {\n    readonly items: readonly SessionSummary[];\n    readonly done: boolean;\n}',
   },
   {
     name: 'SessionLogOffset',
