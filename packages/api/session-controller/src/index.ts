@@ -42,8 +42,7 @@ import type {
   SessionFollowRequest,
   SessionForkRequest,
   SessionForkValue,
-  SessionListRequest,
-  SessionListValue,
+  SessionListPage,
   SessionOpenWorkspacePathRequest,
   SessionOpenWorkspacePathValue,
   SessionPage,
@@ -243,14 +242,14 @@ export class SessionController extends TypertRemoteService {
   }
 
   /**
-   * Read all visible Session rows without resuming an Agent.
-   * @param _request - reserved empty list request.
-   * @param signal - cancellation for persistence reads.
-   * @returns visible Session summaries ordered by activity.
+   * Stream every visible Session row as ordered pages without resuming an Agent.
+   * @param signal - cancellation owned by the Remote stream carrier.
+   * @returns page frames ordered by activity; the `done` frame completes the
+   *   baseline once the persisted listing snapshot is ready.
    */
-  @Remote('list')
-  async list(_request: SessionListRequest, signal: AbortSignal): Promise<SessionListValue> {
-    return { items: await this.listState.list(signal) }
+  @Remote({ mode: 'stream' })
+  list(signal: AbortSignal): AsyncIterable<SessionListPage> {
+    return this.listState.stream(signal)
   }
 
   /**

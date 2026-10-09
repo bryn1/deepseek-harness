@@ -193,6 +193,15 @@ export interface SessionSearchItem {
   readonly snippet: string
 }
 
+/**
+ * Maximum number of Sessions carried by one streamed list page.
+ *
+ * Sized so one page's serialized JSON parses in one main-thread task well
+ * under 0.5 MB at the observed per-row cost (~1.8 KB), while keeping frame
+ * overhead small for corpora in the low thousands.
+ */
+export const SESSION_LIST_PAGE_SIZE = 250
+
 /** Maximum number of Sessions returned by one search. */
 export const SESSION_SEARCH_RESULT_LIMIT = 20
 
@@ -258,14 +267,17 @@ export interface SkillListValue {
   readonly skills: readonly SkillEntry[]
 }
 
-/** Session list request. */
-export interface SessionListRequest {
-  readonly cursor?: string
-}
-
-/** Session list response value. */
-export interface SessionListValue {
+/**
+ * One ordered page of the streamed Session list.
+ *
+ * `done` is true only on the final frame, emitted after the persisted
+ * snapshot is ready: pages before it are provisional progress, never an
+ * authoritative complete listing.
+ */
+export interface SessionListPage {
   readonly items: readonly SessionSummary[]
+  /** True only on the last frame; it completes the streamed baseline. */
+  readonly done: boolean
 }
 
 /** Session search request. */

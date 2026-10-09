@@ -6,19 +6,22 @@ import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
-import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
+import { SessionQueryError, type SessionRecord, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import { z } from 'zod'
 import {
+  SESSION_LIST_PAGE_SIZE,
   SESSION_SEARCH_RESULT_LIMIT,
   SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS,
 } from './types.ts'
 import type {
-  SessionListMetadata, SessionProjectionHints, SessionProjectionValues, SessionSearchItem,
-  SessionSearchValue, SessionSummary,
+  SessionListMetadata, SessionListPage, SessionProjectionHints, SessionProjectionValues,
+  SessionSearchItem, SessionSearchValue, SessionSummary,
 } from './types.ts'
 
 const SEARCH_PROVIDER_CALL_LIMIT = 100
+/** Bounded pool of registry point reads in front of the provisional first frame. */
+const SESSION_LIST_REGISTRY_STAT_CONCURRENCY = 8
 const SESSION_SEARCH_QUERY_MAX_CHARS = 500
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
 
@@ -119,17 +122,52 @@ export class ApiSessionList {
   }
 
   /**
-   * Read every visible attached and persisted Session without activating an Agent.
-   * @param signal - optional cancellation for persistence reads.
-   * @returns visible Session summaries ordered by activity.
+   * Stream every visible Session row as ordered pages.
+   *
+   * The first page carries the live overlay plus Workspace-registry membership
+   * (each cold member header read by point `stat`) without waiting for the
+   * persisted listing, so a client paints early; the registry page is capped
+   * like any other. Later pages carry the remaining snapshot-backed rows in
+   * the same activity order. Every Session id appears in exactly one frame.
+   * The `done` frame follows the complete snapshot-backed listing —
+   * `listSessions` itself waits for the persisted snapshot — so a cold corpus
+   * never authoritatively completes a consumer.
+   * @param signal - cancellation owned by the Remote stream carrier.
+   * @returns page frames; page-one rows in activity order, then remaining rows in activity order.
    */
-  async list(signal?: AbortSignal): Promise<SessionSummary[]> {
-    signal?.throwIfAborted()
+  async *stream(signal: AbortSignal): AsyncIterable<SessionListPage> {
+    signal.throwIfAborted()
+    const firstRows = new Map<SessionId, SessionSummary>()
+    for (const session of this.ctx.sessions.list()) firstRows.set(session.id, this.summaryFor(session))
+    await this.projectRegistryRows(firstRows, signal)
+    let carry = sortSummaries([...firstRows.values()])
+    while (carry.length > SESSION_LIST_PAGE_SIZE) {
+      yield { items: carry.slice(0, SESSION_LIST_PAGE_SIZE), done: false }
+      carry = carry.slice(SESSION_LIST_PAGE_SIZE)
+    }
+    // Live and registry membership is the provisional catalog: it reaches the
+    // consumer before the snapshot read is even issued, so an empty owed set
+    // still means the first rows painted early, not after the cold scan.
+    if (carry.length > 0) {
+      yield { items: carry, done: false }
+      carry = []
+    }
     const records = await this.ctx.sessionQuery.listSessions(signal)
-    signal?.throwIfAborted()
+    signal.throwIfAborted()
+    const owed = [...carry, ...this.project(records, new Set(firstRows.keys()))]
+    let index = 0
+    while (owed.length - index > SESSION_LIST_PAGE_SIZE) {
+      yield { items: owed.slice(index, index + SESSION_LIST_PAGE_SIZE), done: false }
+      index += SESSION_LIST_PAGE_SIZE
+    }
+    yield { items: owed.slice(index), done: true }
+  }
+
+  private project(records: readonly SessionRecord[], skip: ReadonlySet<SessionId>): SessionSummary[] {
     const items: SessionSummary[] = []
     const cold: SessionHeader[] = []
     for (const record of records) {
+      if (skip.has(record.header.id)) continue
       const live = this.ctx.sessions.get(record.header.id)
       if (live !== undefined) {
         items.push(this.summaryFor(live))
@@ -139,8 +177,41 @@ export class ApiSessionList {
       cold.push(record.header)
     }
     for (const header of cold) items.push(this.summarizeCold(header))
-    items.sort((left, right) => right.updatedAt - left.updatedAt)
-    return items
+    return sortSummaries(items)
+  }
+
+  /** Add registry-accounted rows the live overlay does not already carry. */
+  private async projectRegistryRows(rows: Map<SessionId, SessionSummary>, signal: AbortSignal): Promise<void> {
+    const persistence = this.ctx.get('sessionPersistence')
+    // Deployments may mount neither service; the registry accessor is only
+    // present where Workspaces are composed.
+    const registry = this.ctx.get('workspaceRegistry')
+    if (persistence === undefined || registry === undefined) return
+    const accounted = new Set<SessionId>()
+    for (const workspace of registry.list()) {
+      for (const sessionId of workspace.sessionIds) accounted.add(sessionId)
+    }
+    for (const sessionId of registry.archivedSessionIds) accounted.add(sessionId)
+    const pending = [...accounted].filter(sessionId => !rows.has(sessionId))
+    // Point reads run on a bounded pool: each `stat` pays its own artifact
+    // lookup, so reading members one by one would put the whole registry's
+    // lookup cost in front of the provisional first frame.
+    let cursor = 0
+    await Promise.all(Array.from(
+      { length: Math.min(SESSION_LIST_REGISTRY_STAT_CONCURRENCY, pending.length) },
+      async () => {
+        while (cursor < pending.length) {
+          signal.throwIfAborted()
+          const sessionId = pending[cursor] as SessionId
+          cursor += 1
+          const snapshot = await persistence.stat(sessionId, { signal })
+          // A member whose artifact is gone gets no row; a header the list
+          // projection drops (no cwd) can never enter the complete listing either.
+          if (snapshot === undefined || snapshot.header.cwd === undefined) continue
+          rows.set(sessionId, this.summarizeCold(snapshot.header))
+        }
+      },
+    ))
   }
 
   private summarizeCold(header: SessionHeader): SessionSummary {
@@ -326,6 +397,10 @@ function normalizeSearchQuery(query: string): string {
 
 function updatedAt(header: SessionHeader, metadata: SessionListMetadata | undefined): number {
   return Math.max(header.createdAt, metadata?.lastPromptAt ?? 0)
+}
+
+function sortSummaries(items: SessionSummary[]): SessionSummary[] {
+  return items.sort((left, right) => right.updatedAt - left.updatedAt)
 }
 
 function listFields(header: SessionHeader): {
