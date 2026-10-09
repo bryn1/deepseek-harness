@@ -41,3 +41,29 @@ export function mergeOrderedBaseline<T>(
   }
   return merged
 }
+
+/**
+ * Merge streamed list arrivals without hiding established identities.
+ * Established rows the stream has not carried yet keep their relative
+ * positions ahead of arrival rows; every id the stream carried appears once,
+ * with its latest arrival value, at its first-arrival position. Nothing is
+ * removed — only the completion frame's {@link mergeOrderedBaseline} install
+ * settles membership.
+ *
+ * @param established - the client's current order.
+ * @param arrivals - rows in stream (page, then in-page) order; repeats allowed.
+ * @param keyOf - stable identity selector.
+ * @returns established rows absent from `arrivals` in established order, then
+ *   arrival ids in first-arrival order.
+ */
+export function mergeStreamedBaseline<T>(
+  established: readonly T[],
+  arrivals: Iterable<T>,
+  keyOf: (value: T) => unknown,
+): T[] {
+  const latestByKey = new Map<unknown, T>()
+  for (const value of arrivals) latestByKey.set(keyOf(value), value)
+  const merged = established.filter(value => !latestByKey.has(keyOf(value)))
+  for (const value of latestByKey.values()) merged.push(value)
+  return merged
+}

@@ -56,7 +56,12 @@ export interface SessionListState {
   ids: SessionId[]
   /** Host/catalog rows plus retained subagent fallbacks; only `ids` expresses Host-list membership. */
   byId: Record<SessionId, SessionSummary>
-  /** Arrival lifecycle projected 1:1 from the manager snapshot (see SessionListPhase): empty-with-ready means "truly no sessions". */
+  /**
+   * Arrival lifecycle projected 1:1 from the manager snapshot (see
+   * SessionListPhase): only `ready` (the `done` frame landed) is complete, so
+   * empty-with-ready means "truly no sessions"; `streaming` rows are
+   * provisional progress and `pending` rows have not arrived at all.
+   */
   phase: SessionListPhase
   /** Shared projection values and explicit-read state, including unopened Sessions. */
   projectionsBySession: Readonly<Record<SessionId, SessionProjectionSnapshot>>

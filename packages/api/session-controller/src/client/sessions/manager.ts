@@ -1,4 +1,9 @@
-/** Host catalog, durable projection caches, and explicitly retained Client instances. */
+/**
+ * Host catalog, durable projection caches, and explicitly retained Client
+ * instances.
+ * reason: one object-layer cluster (instance map, frame dispatch, list
+ * lifecycle, projection store) must mutate together to stay consistent.
+ */
 
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import { SessionSeq, type SessionId, type SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
@@ -11,10 +16,10 @@ import type {
   SessionRenameValue,
   SessionSummary,
 } from '../../types.ts'
-import { mergeOrderedBaseline } from '../ordered-baseline.ts'
+import { mergeOrderedBaseline, mergeStreamedBaseline } from '../ordered-baseline.ts'
 import { isRemoteFailure } from '@deepseek-ai/dsh-api-gateway/client'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import { RemoteError, type RemoteFailure, type RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { SessionListEntry, TitledSessionSummary } from './lineage.ts'
 import { flattenLineage } from './lineage.ts'
 // Type-only merge edge: the title domain's client-namespace outlet declares
@@ -33,13 +38,17 @@ function sessionSeqCursor(value: number): SessionSeqCursor {
 
 /**
  * List arrival lifecycle, orthogonal to the pull-activity `state` axis:
- * `pending` (no successful pull yet — an empty items array means "nothing
- * arrived", not "nothing exists") → `ready` (at least one pull landed).
- * Monotone: `ready` never steps back — later pull failures and reconnect
- * re-pulls ride the `state`/`error` axis, which is where failure is modeled
- * (no `error` phase here; that would duplicate `state`).
+ * `pending` (no page landed — an empty items array means "nothing arrived",
+ * not "nothing exists") → `streaming` (at least one page landed and the
+ * `done` frame is still pending; rows are provisional progress and never
+ * authoritative: gating consumers must treat it like `pending` plus display)
+ * → `ready` (the `done` frame landed: the catalog is COMPLETE, so `ready`
+ * with an empty list means truly empty). Monotone: `ready` never steps back —
+ * later pull failures and reconnect re-pulls ride the `state`/`error` axis,
+ * which is where failure is modeled (no `error` phase here; that would
+ * duplicate `state`).
  */
-export type SessionListPhase = 'pending' | 'ready'
+export type SessionListPhase = 'pending' | 'streaming' | 'ready'
 
 /** Request-local content hit returned to sidebar search consumers. */
 export interface SessionSearchResultItem {
@@ -101,10 +110,12 @@ export class SessionManager {
   private readonly projectionStores = new Map<SessionId, ProjectionValueStore>()
   private summaries: SessionSummary[] = []
   private listState: 'idle' | 'loading' | 'error' = 'idle'
-  /** Arrival phase; the pending → ready edge fires on the first successful pull (see SessionListPhase). */
+  /** Arrival phase; the first landed page opens `streaming`, the `done` frame closes `ready` (see SessionListPhase). */
   private listPhase: SessionListPhase = 'pending'
   private listError: RemoteFailure | null = null
   private listInflight: Promise<void> | null = null
+  /** Cancels the active `session.list` carrier when a pull is superseded. */
+  private listStream: AbortController | null = null
   /** Active list request's mutation log; its identity also fences completion after reconnect. */
   private listMutations: SessionListMutation[] | null = null
   private readonly addresses = new Map<SessionId, SubagentAddress>()
@@ -196,6 +207,8 @@ export class SessionManager {
    */
   async dispose(): Promise<void> {
     this.disposed = true
+    this.listStream?.abort()
+    this.listStream = null
     this.listMutations = null
     this.listInflight = null
     this.engagedSessions.clear()
@@ -389,7 +402,7 @@ export class SessionManager {
 
   // ---- List API ----
 
-  /** Full refresh via session.list (single-flight within one Host generation). */
+  /** Full refresh through the streamed `session.list` (single-flight within one Host generation). */
   refreshList(): Promise<void> {
     if (this.listInflight !== null) return this.listInflight
     this.listState = 'loading'
@@ -397,58 +410,84 @@ export class SessionManager {
     const established = this.summaries
     const mutations: SessionListMutation[] = []
     this.listMutations = mutations
+    const stream = new AbortController()
+    this.listStream = stream
     this.notifier.markDirty()
     this.listInflight = (async () => {
       try {
-        const result = await this.remote.session.list({})
+        const accumulator = new Map<SessionId, SessionSummary>()
+        let completed = false
+        for await (const page of this.remote.session.list(stream.signal)) {
+          // A superseded pull stops at the token check; its carrier was
+          // already cancelled by the replacement or a transport reset.
+          if (this.listMutations !== mutations) return
+          for (const item of page.items) accumulator.set(item.sessionId, item)
+          if (page.done) {
+            // The completion frame closes the catalog; the carrier's tail is
+            // not read, so a stream that keeps answering after `done` cannot
+            // hold the pull open.
+            completed = true
+            break
+          }
+          if (this.listPhase === 'pending') this.listPhase = 'streaming'
+          this.summaries = mutations.reduce(
+            applyMutation,
+            mergeStreamedBaseline(established, accumulator.values(), summary => summary.sessionId),
+          )
+          this.notifier.markDirty()
+        }
         if (this.listMutations !== mutations) return
-        if (result.ok) {
-          const baseline: SessionSummary[] = this.listPhase === 'pending'
-            ? [...result.value.items]
-            : mergeOrderedBaseline(established, result.value.items, summary => summary.sessionId)
-          // A removal supersedes running observed in the pull, including after re-addition.
-          const removedSincePull = new Set<SessionId>()
-          for (const mutation of mutations) {
-            if (mutation.kind === 'remove') removedSincePull.add(mutation.sessionId)
-          }
-          for (const s of baseline) {
-            if (s.running && !removedSincePull.has(s.sessionId)) this.engagedSessions.add(s.sessionId)
-          }
-          const summaries = mutations.reduce(applyMutation, baseline)
-          this.summaries = summaries
-          // A full list can remove identities without a removal frame.
-          const retained = this.retainedIds(summaries)
-          for (const sessionId of this.engagedSessions) this.pruneEngagement(sessionId, retained)
-          this.listState = 'idle'
-          this.listPhase = 'ready'
-          this.updateParentAvailability()
-          // Resident Sessions and list rows share one display blank, reconciled with the metadata projection.
-          for (const s of this.summaries) {
-            const session = this.sessions.get(s.sessionId)
-            if (session === undefined) continue
-            session.handleBlank(this.effectiveBlank(s))
-            session.handleRunning(s.running)
-          }
-          // Land each row's projection block in the per-session value store
-          // (cold titles surface without opening the session). A list block is
-          // partial — only the keys its source holds — so an absent key never
-          // clears; how the present keys merge depends on the block's kind.
-          for (const s of result.value.items) {
-            if (s.projections !== undefined) this.applyListBlock(s.sessionId, s.projections)
-          }
-        } else {
+        if (!completed) {
           this.listState = 'error'
-          this.listError = result.error
+          this.listError = new RemoteError(
+            'gateway/internal',
+            'session list stream ended without its completion frame',
+            {},
+          )
+          return
+        }
+        const rows = [...accumulator.values()]
+        const baseline = mergeOrderedBaseline(established, rows, summary => summary.sessionId)
+        // A removal supersedes running observed in the pull, including after re-addition.
+        const removedSincePull = new Set<SessionId>()
+        for (const mutation of mutations) {
+          if (mutation.kind === 'remove') removedSincePull.add(mutation.sessionId)
+        }
+        for (const s of baseline) {
+          if (s.running && !removedSincePull.has(s.sessionId)) this.engagedSessions.add(s.sessionId)
+        }
+        const summaries = mutations.reduce(applyMutation, baseline)
+        this.summaries = summaries
+        // A complete list can remove identities without a removal frame.
+        const retained = this.retainedIds(summaries)
+        for (const sessionId of this.engagedSessions) this.pruneEngagement(sessionId, retained)
+        this.listState = 'idle'
+        this.listPhase = 'ready'
+        this.updateParentAvailability()
+        // Resident Sessions and list rows share one display blank, reconciled with the metadata projection.
+        for (const s of this.summaries) {
+          const session = this.sessions.get(s.sessionId)
+          if (session === undefined) continue
+          session.handleBlank(this.effectiveBlank(s))
+          session.handleRunning(s.running)
+        }
+        // Land each row's projection block in the per-session value store
+        // (cold titles surface without opening the session). A list block is
+        // partial — only the keys its source holds — so an absent key never
+        // clears; how the present keys merge depends on the block's kind.
+        for (const s of rows) {
+          if (s.projections !== undefined) this.applyListBlock(s.sessionId, s.projections)
         }
       } catch (error) {
-        if (!isRemoteFailure(error)) throw error
         if (this.listMutations !== mutations) return
+        if (!isRemoteFailure(error)) throw error
         this.listState = 'error'
         this.listError = error
       } finally {
         if (this.listMutations === mutations) {
           this.listMutations = null
           this.listInflight = null
+          if (this.listStream === stream) this.listStream = null
           this.notifier.markDirty()
         }
       }
@@ -737,7 +776,17 @@ export class SessionManager {
     for (const store of this.projectionStores.values()) store.clear()
     this.listMutations = null
     this.listInflight = null
-    void this.refreshList()
+    // The new transport generation supersedes the previous list stream; its
+    // carrier is cancelled so the Host stops projecting into a dead stream.
+    this.listStream?.abort()
+    this.listStream = null
+    // The re-established transport calls back synchronously, so the pull's
+    // rejection has no awaiting caller; failures outside the Remote protocol
+    // (a carrier answering with a non-stream) surface here, like the control
+    // stream's own reported failures.
+    this.refreshList().catch((error: unknown) => {
+      console.error('[session-controller] session list refresh failed:', error)
+    })
     const parents = new Set(this.projectionLoads.keys())
     for (const id of this.sessions.keys()) {
       const address = this.addresses.get(id)
@@ -746,7 +795,11 @@ export class SessionManager {
     for (const { controller } of this.projectionInflight.values()) controller.abort()
     this.projectionInflight.clear()
     this.projectionLoads.clear()
-    for (const parentSessionId of parents) void this.refreshProjections(parentSessionId)
+    for (const parentSessionId of parents) {
+      this.refreshProjections(parentSessionId).catch((error: unknown) => {
+        console.error('[session-controller] projection refresh failed:', error)
+      })
+    }
   }
 
   private buildListSnapshot(): SessionListSnapshot {
