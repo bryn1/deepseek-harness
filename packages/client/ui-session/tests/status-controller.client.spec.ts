@@ -1,18 +1,26 @@
 /** Running-state ownership across the real Controller catalog and UI status source. */
 import { expect, vi } from 'vitest'
-import { ok } from '@deepseek-ai/dsh-remote-mock'
+import { ok, streamHandle } from '@deepseek-ai/dsh-remote-mock'
+import type { SessionListPage } from '@deepseek-ai/dsh-api-session-controller/types'
 import { createClientTest, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { SESSION_FORMAT_VERSION, type SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionFollowFrame } from '@deepseek-ai/dsh-api-session-controller/types'
 
 const it = createClientTest({ roster: webApp.closure(['@deepseek-ai/dsh-client-ui-session']) })
+/** A finished `session.list` stream whose single page carries `items`. */
+function listStream(items: SessionListPage['items']) {
+  return streamHandle<SessionListPage>((async function* () {
+    yield { items, done: true }
+  })())
+}
+
 const parentId = 'status-parent' as SessionId
 const childId = 'status-child' as SessionId
 
 it('preserves unlisted child status through metadata updates and main view acknowledgement', async ({ mock, start }) => {
-  mock.remote.session.list.mockResolvedValue(ok({ items: [{
+  mock.remote.session.list.mockReturnValue(listStream([{
     sessionId: parentId, updatedAt: 1, running: false, blank: false, agentAvailable: true,
-  }] }))
+  }]))
   mock.remote.session.projections.mockResolvedValue(ok({
     asOfSeq: 0,
     values: { subagentCatalog: [{ id: childId, createdAt: 1, mode: 'continuable', label: 'Child' }] },

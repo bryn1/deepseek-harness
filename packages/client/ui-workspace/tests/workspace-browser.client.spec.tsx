@@ -2296,6 +2296,19 @@ describe('WorkspaceBrowser', () => {
     const row = screen.getByText('Needle A').closest('[role="treeitem"]') as HTMLElement
     expect(row.hasAttribute('draggable')).toBe(false)
   })
+
+  it('paints rows from the first stream frame while the list still streams', () => {
+    localStorage.clear()
+    const preferences = createWorkspaceViewStore().create()
+    preferences.actions.setGroupExpanded('alpha', true)
+    localStorage.setItem('dsh.workspace.view.v5', JSON.stringify({ ...preferences.getSnapshot(), orderBy: 'updated' }))
+    const b = mount({
+      useSessions: hook(sessionState([summary('early', 100)], { phase: 'streaming' })),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['early'])])),
+    })
+    expect(screen.getByText('early').closest('[role="treeitem"]')).toBeTruthy()
+    b.view.unmount()
+  })
 })
 
 
