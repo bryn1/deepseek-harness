@@ -1,0 +1,573 @@
+{
+  "formatVersion": 2,
+  "roots": [
+    {
+      "key": "event:compaction/summary",
+      "kind": "event",
+      "event": "compaction/summary",
+      "surface": false,
+      "digest": "b0bbd551ecb3bad4d5130fa5a038bfd8dd2c064e4dc64914339e897f81a00b85",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 38,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "union",
+            "types": [
+              2,
+              37
+            ]
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "compactionId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "llmStreamCall",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "maxTokens",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "model",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "rawOutput",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "replayBoundarySeq",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "replayScope",
+                "type": 31,
+                "optional": true
+              },
+              {
+                "name": "shadowedRange",
+                "type": 34,
+                "optional": false
+              },
+              {
+                "name": "shadowedSeqs",
+                "type": 35,
+                "optional": false
+              },
+              {
+                "name": "shadowedTokenCount",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "sourceCommandId",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "summary",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "usage",
+                "type": 36,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "array",
+            "element": 7
+          },
+          {
+            "kind": "union",
+            "types": [
+              8,
+              17,
+              20,
+              22,
+              24,
+              27,
+              29
+            ]
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachment",
+                "type": 9,
+                "optional": false
+              },
+              {
+                "name": "offloaded",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "type",
+                "type": 16,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachmentId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "bytes",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "height",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "mediaType",
+                "type": 10,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "originalDimensions",
+                "type": 15,
+                "optional": true
+              },
+              {
+                "name": "width",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "union",
+            "types": [
+              11,
+              12,
+              13,
+              14
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "image/gif"
+          },
+          {
+            "kind": "literal",
+            "value": "image/jpeg"
+          },
+          {
+            "kind": "literal",
+            "value": "image/png"
+          },
+          {
+            "kind": "literal",
+            "value": "image/webp"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "height",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "width",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "image"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachment",
+                "type": 18,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 19,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachmentId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "bytes",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "file"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "text",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 21,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "text"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "text",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 23,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "reasoning"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "tool",
+                "type": 25,
+                "optional": true
+              },
+              {
+                "name": "toolName",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 26,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "never"
+          },
+          {
+            "kind": "literal",
+            "value": "tool-addition"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "toolName",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 28,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "tool-removal"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "arguments",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "id",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 30,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "tool-call"
+          },
+          {
+            "kind": "union",
+            "types": [
+              32,
+              33
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "full-surface"
+          },
+          {
+            "kind": "literal",
+            "value": "shadowed-head"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "end",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "start",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 5
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "cacheReadTokens",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "cacheWriteTokens",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "inputTokens",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "outputTokens",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "reasoningTokens",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "totalTokens",
+                "type": 5,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "compactionId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "maxTokens",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "model",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "rawOutput",
+                "type": 6,
+                "optional": true
+              },
+              {
+                "name": "replayBoundarySeq",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "replayScope",
+                "type": 31,
+                "optional": true
+              },
+              {
+                "name": "shadowedRange",
+                "type": 34,
+                "optional": false
+              },
+              {
+                "name": "shadowedSeqs",
+                "type": 35,
+                "optional": false
+              },
+              {
+                "name": "shadowedTokenCount",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "sourceCommandId",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "summary",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "usage",
+                "type": 36,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "compaction/summary"
+          }
+        ]
+      }
+    }
+  ],
+  "types": []
+}

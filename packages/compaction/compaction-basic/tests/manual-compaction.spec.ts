@@ -48,6 +48,8 @@ class GatedCompactionEngine extends BasicCompactionEngine {
   summary: ContentBlock[] = [{ type: 'text', text: 'checkpoint' }]
   rawOutput: ContentBlock[] | undefined
   usage: TokenUsage | undefined
+  replayScope: SummaryResult['replayScope']
+  replayBoundarySeq: SummaryResult['replayBoundarySeq']
   error: unknown
   gate: Promise<undefined> | undefined
   duringSummary: (() => void) | undefined
@@ -68,6 +70,8 @@ class GatedCompactionEngine extends BasicCompactionEngine {
       provider: 'summary-provider',
       model: 'summary-model',
       ...this.usage === undefined ? {} : { usage: this.usage },
+      ...this.replayScope === undefined ? {} : { replayScope: this.replayScope },
+      ...this.replayBoundarySeq === undefined ? {} : { replayBoundarySeq: this.replayBoundarySeq },
     }
   }
 }
@@ -256,6 +260,37 @@ describe('compactNow through the real loop', () => {
       const image = compact.calls[0]?.messages.flatMap(message => message.content).find(block => block.type === 'image')
       expect(image).toMatchObject({ offloaded: true })
       expect(JSON.stringify(source)).not.toContain('offloaded')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('appends the replay fields the summarizer sets onto the summary event', async () => {
+    const harness = await loopHarness()
+    const { ctx, agent, compact } = harness
+    await seedHistory(harness)
+    const boundary = agent.session.surface.nodes.at(-1)!
+    compact.replayScope = 'full-surface'
+    compact.replayBoundarySeq = boundary
+    try {
+      expect(await compact.compactNow(agent, SIGNAL)).not.toBeNull()
+      const event = agent.session.snapshotEvents().find(e => e.type === 'compaction/summary')!
+      expect(event.data.replayScope).toBe('full-surface')
+      expect(event.data.replayBoundarySeq).toBe(boundary)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('omits the replay fields when the summarizer sets neither', async () => {
+    const harness = await loopHarness()
+    const { ctx, agent, compact } = harness
+    await seedHistory(harness)
+    try {
+      expect(await compact.compactNow(agent, SIGNAL)).not.toBeNull()
+      const event = agent.session.snapshotEvents().find(e => e.type === 'compaction/summary')!
+      expect('replayScope' in event.data).toBe(false)
+      expect('replayBoundarySeq' in event.data).toBe(false)
     } finally {
       await ctx.fiber.dispose()
     }

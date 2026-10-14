@@ -14,6 +14,15 @@ import type { CompactionId } from './brand.ts'
 
 export type { CompactionId }
 
+/**
+ * The conversation input one summarization call replayed, recorded so a reader
+ * reconstructs exactly what the model saw: `'shadowed-head'` (the default,
+ * also the meaning of absence on `compaction/summary`) replays the shadowed
+ * region only, pinned by its `shadowedSeqs`; `'full-surface'` replays the
+ * conversation surface prefix up to the paired `replayBoundarySeq`.
+ */
+export type CompactionReplayMode = 'shadowed-head' | 'full-surface'
+
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /**
@@ -51,6 +60,18 @@ declare module '@deepseek-ai/dsh-session/types' {
       maxTokens?: number
       /** Provider-reported token usage for the summarization request, when emitted. */
       usage?: TokenUsage
+      /**
+       * The replay mode the summarize call used; absence means `'shadowed-head'`.
+       */
+      replayScope?: CompactionReplayMode
+      /**
+       * The seq of the last surface node a `'full-surface'` replay read;
+       * present only alongside {@link replayScope} `'full-surface'`. A reader
+       * reconstructs the model-visible input from the system head, the header's
+       * tools, and every surface node up to this seq in surface order (seqs
+       * are strictly increasing, so the rule selects the exact sent prefix).
+       */
+      replayBoundarySeq?: SessionSeq
     } & (
       | {
         /** Complete provider output before the backend's safe summary projection. */
