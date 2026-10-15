@@ -104,6 +104,26 @@ const modelPolicy: z<ModelCompactPolicyConfig> = z.object({
 })
 
 /**
+ * The complete {@link BasicCompactionEngine.Config} schema, exported so a
+ * backend that replaces this engine extends the same accepted keys (through
+ * `z.intersect`) instead of restating them.
+ * The declaration order is deliberate and carries no meaning.
+ */
+export const baseConfigSchema: z<BasicCompactionConfig> = z.object({
+  auto: z.boolean(),
+  thresholdRatio: thresholdRatioSchema,
+  modelPolicies: z.array(modelPolicy),
+  headroomTokens: headroomTokensSchema,
+  summarizationProvider: summarizationProviderSchema,
+  retainRatio: retainRatioSchema,
+  maxTokens: maxTokensSchema,
+  compactionRetries: compactionRetriesSchema,
+  summarizationModel: summarizationModelSchema,
+  retainTokens: retainTokensSchema,
+  maxOverflowRetries: maxOverflowRetriesSchema,
+})
+
+/**
  * Dependency-light compaction backend using `ctx.tokenMeter` for pressure,
  * retention, cited source events, and summary-convergence pricing.
  *
@@ -114,19 +134,7 @@ const modelPolicy: z<ModelCompactPolicyConfig> = z.object({
 export class BasicCompactionEngine extends CompactionEngine {
   static inject = ['llm', 'tokenMeter', 'sessions']
 
-  static Config: z<BasicCompactionConfig> = z.object({
-    thresholdRatio: thresholdRatioSchema,
-    headroomTokens: headroomTokensSchema,
-    retainRatio: retainRatioSchema,
-    retainTokens: retainTokensSchema,
-    summarizationProvider: summarizationProviderSchema,
-    summarizationModel: summarizationModelSchema,
-    maxTokens: maxTokensSchema,
-    compactionRetries: compactionRetriesSchema,
-    maxOverflowRetries: maxOverflowRetriesSchema,
-    modelPolicies: z.array(modelPolicy),
-    auto: z.boolean(),
-  })
+  static Config: z<BasicCompactionConfig> = baseConfigSchema
 
   /** Resolved and validated compaction configuration. */
   readonly config: ResolvedConfig

@@ -1,0 +1,67 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/compaction/compaction-warm/README.md
+/:
+  en: 3b8e65bdc19e2677
+  zh: 30d1983754cebe6f
+/deepseek-ai-dsh-compaction-warm:
+  en: 807237dc111cf6af
+  zh: 7476e70f45ef16f5
+/deepseek-ai-dsh-compaction-warm/summary:
+  en: 0b616b52943a77f6
+  zh: 288c0f25b5cd2409
+/deepseek-ai-dsh-compaction-warm/table-of-contents:
+  en: 76368b6b1da79c80
+  zh: 20d3097b9bcc8b72
+/deepseek-ai-dsh-compaction-warm/use-this-package:
+  en: ebfe1ef68ed3b3a7
+  zh: ef1128c928a7ba96
+/deepseek-ai-dsh-compaction-warm/use-this-package/smallest-working-composition:
+  en: 00fe0687e5e42888
+  zh: 6b455c98d3afa3e0
+/deepseek-ai-dsh-compaction-warm/use-this-package/configuration:
+  en: ad0ba4c70f025de7
+  zh: fdd7ecdd62efc647
+/deepseek-ai-dsh-compaction-warm/use-this-package/when-the-warm-path-is-refused:
+  en: 5e685edb51004fd8
+  zh: 57da140cc1bd4430
+/deepseek-ai-dsh-compaction-warm/understand-the-implementation:
+  en: ee4615a04fa6503d
+  zh: ee2c5fb2204a43cf
+/deepseek-ai-dsh-compaction-warm/understand-the-implementation/design-philosophy:
+  en: e9b818b008a25c0e
+  zh: cf6197f7dc905bbf
+/deepseek-ai-dsh-compaction-warm/understand-the-implementation/what-the-warm-replay-sends:
+  en: 45316dbeeb2978d6
+  zh: e6dd1141a0486e6d
+/deepseek-ai-dsh-compaction-warm/understand-the-implementation/replay-fields:
+  en: 564d0f3000bdd712
+  zh: df776b4bd2fe1718
+/deepseek-ai-dsh-compaction-warm/understand-the-implementation/route-selection:
+  en: 1e6476dbec57bc5f
+  zh: 9501c9f76780f05e
+/deepseek-ai-dsh-compaction-warm/understand-the-implementation/source-map:
+  en: 72ed2b96a7dc08d0
+  zh: 214322bcf704ce63
+/deepseek-ai-dsh-compaction-warm/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-compaction-warm/model-experience/auxiliary-summarizer-request:
+  en: 7169bd02a7a6c396
+  zh: b8c5ee5dafa50bc5
+/deepseek-ai-dsh-compaction-warm/model-experience/auxiliary-summarizer-request/what-the-model-sees:
+  en: 37a73afc8c004d90
+  zh: 36e476cbe2db9663
+/deepseek-ai-dsh-compaction-warm/model-experience/auxiliary-summarizer-request/token-effect:
+  en: 1686d9da26805307
+  zh: 5548272aea250b3f
+/deepseek-ai-dsh-compaction-warm/model-experience/auxiliary-summarizer-request/kv-cache-effect:
+  en: 6affaef1e0a2538f
+  zh: a6d408ad48ef45e4
+/deepseek-ai-dsh-compaction-warm/known-limitations-and-deferred-work:
+  en: 5001ec6b0e292944
+  zh: 0e1887822bb3bb6d
+/deepseek-ai-dsh-compaction-warm/known-limitations-and-deferred-work/dev-note:
+  en: 3a52c60b4725102c
+  zh: f6a249ac1d66f716

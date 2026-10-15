@@ -751,6 +751,28 @@ export interface ToolResultPruneConfig {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-compaction-tool-result-pruner -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-compaction-warm -->
+<a id="deepseek-aidsh-compaction-warm"></a>
+
+## `@deepseek-ai/dsh-compaction-warm`
+
+- `inject`: `llm` · `tokenMeter` · `sessions`
+- `refs`: [`BasicCompactionConfig`](#deepseek-aidsh-compaction-basic)
+- `source`: [`packages/compaction/compaction-warm/src/types.ts:11`](../packages/compaction/compaction-warm/src/types.ts)
+
+```ts config-catalog
+/** Warm backend configuration: every basic field plus the warm-replay policy keys. */
+export interface WarmCompactionConfig extends BasicCompactionConfig {
+  /** Attempt full-surface warm replays; `false` reproduces basic exactly for comparison runs. Defaults to `true`. */
+  warm?: boolean
+  /** Case-insensitive comma list of provider routes allowed the full-prompt replay; empty allows every provider. Defaults to `''`. */
+  warmProviders?: string
+  /** Require the last routed assistant response to report `cacheReadTokens > 0` before attempting warm. Defaults to `false`. */
+  warmRequireReportedCache?: boolean
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-compaction-warm -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-cordis-host-runner -->
 <a id="deepseek-aidsh-cordis-host-runner"></a>
 
