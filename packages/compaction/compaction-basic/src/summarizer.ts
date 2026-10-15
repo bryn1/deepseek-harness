@@ -7,6 +7,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { contentHasImage, BlockAssembler, LlmError } from '@deepseek-ai/dsh-llm'
 import { deepFreeze } from '@deepseek-ai/dsh-util-values'
+import type { CompactionReplayMode } from '@deepseek-ai/dsh-compaction/types'
+import type { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type {
   ContentBlock, FinishReason, GenerateOptions, Message, RequestMessage, TokenUsage, ToolSchema,
 } from '@deepseek-ai/dsh-llm'
@@ -91,6 +93,14 @@ export type SummaryResult = {
   maxTokens?: number
   /** Provider-reported usage for this summarization request. */
   usage?: TokenUsage
+  /**
+   * The replay fields a backend variant sets when its call replaced the
+   * shadowed-head input; both are appended verbatim to the durable
+   * `compaction/summary` event, whose payload states the reader rule. Basic's
+   * summarizer never sets them, so absence stays the shadowed-head default.
+   */
+  replayScope?: CompactionReplayMode
+  replayBoundarySeq?: SessionSeq
 } & (
   | {
     /** Complete provider output before the text-only summary projection. */

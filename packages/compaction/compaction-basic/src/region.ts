@@ -483,6 +483,8 @@ function commitCompactionBody(
     model,
     maxTokens,
     usage,
+    replayScope,
+    replayBoundarySeq,
     checkpointMessage,
   } = summarized
   const callRecord = summarized.llmStreamCall === true
@@ -502,6 +504,8 @@ function commitCompactionBody(
     model,
     ...maxTokens === undefined ? {} : { maxTokens },
     ...usage === undefined ? {} : { usage },
+    ...replayScope === undefined ? {} : { replayScope },
+    ...replayBoundarySeq === undefined ? {} : { replayBoundarySeq },
   })
   session.append('user/message', checkpointMessage, {
     surfaceOp: { op: 'replace', startSeq: start, endSeq: end },

@@ -44,6 +44,7 @@ export type {
   ResolvedRetention,
   ResolvedTargetPolicy,
 } from './types.ts'
+export type { SummarizationInput, SummaryResult } from './summarizer.ts'
 
 /** Resolve the exact provider/model durably routed for the latest request. */
 function routedTarget(
