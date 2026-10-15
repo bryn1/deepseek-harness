@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "compaction-warm",
+    "description": "Replay the full conversation surface for compaction summaries when the routed route reports prefix-cache reuse."
+  }
+}

@@ -28,6 +28,7 @@ kind: "package-group"
 |---|---|---|
 | [`compaction/`](compaction/README.zh.md) | 共享的压缩约定：所有后端与触发器使用的操作与摘要格式 | `ctx.compaction` |
 | [`compaction-basic/`](compaction-basic/README.zh.md) | 随 token 压力上升自动把较早历史压缩为摘要 | 注册 `ctx.compaction` |
+| [`compaction-warm/`](compaction-warm/README.zh.md) | 基础后端的直接替换：当路由到的模型报告前缀缓存复用时，对完整会话表面进行摘要 | 注册 `ctx.compaction` |
 | [`compaction-tool-result-pruner/`](compaction-tool-result-pruner/README.zh.md) | 修剪超大工具输出，减少需要压缩的历史 | `ctx.toolResultPruner` |
 | [`compaction-image-offload/`](compaction-image-offload/README.zh.md) | 支持图片的路由拒绝请求时，把超出预算的请求图片替换为占位文本 | 监听 `agent/request-error` |
 | [`command-compact/`](command-compact/README.zh.md) | 按需压缩历史的 `/compact` 命令 | 注册到 `ctx.commands` |

@@ -28,6 +28,7 @@ Each package below provides one piece of the feature; open a package page for ho
 |---|---|---|
 | [`compaction/`](compaction/README.md) | The shared condensation contract: the operations and summary format every backend and trigger use | `ctx.compaction` |
 | [`compaction-basic/`](compaction-basic/README.md) | Automatic condensation of older history into a summary as token pressure builds | registers `ctx.compaction` |
+| [`compaction-warm/`](compaction-warm/README.md) | Drop-in basic replacement that summarizes against the full conversation surface when the routed route reports prefix-cache reuse | registers `ctx.compaction` |
 | [`compaction-tool-result-pruner/`](compaction-tool-result-pruner/README.md) | Trims oversized tool outputs so less history needs condensing | `ctx.toolResultPruner` |
 | [`compaction-image-offload/`](compaction-image-offload/README.md) | Replaces over-budget request images with placeholders when an image-capable route rejects a request | listens to `agent/request-error` |
 | [`command-compact/`](command-compact/README.md) | The `/compact` command to condense history on demand | registers on `ctx.commands` |
